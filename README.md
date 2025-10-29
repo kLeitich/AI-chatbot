@@ -19,6 +19,22 @@ A Go + React full-stack chatbot integrated with Ollama to handle natural languag
 | Ollama | Latest |
 | Docker | 24+ |
 
+## Environment Variables
+
+Create per-service env files by copying the examples:
+
+```bash
+# Backend
+cp backend/env.example backend/.env
+
+# Frontend
+cp frontend/env.example frontend/.env
+```
+
+Backend (.env): `PORT`, `JWT_SECRET`, `OLLAMA_MODEL`, `SQLITE_PATH`, `DEFAULT_ADMIN_EMAIL`, `DEFAULT_ADMIN_PASSWORD`
+
+Frontend (.env): `VITE_API_URL`
+
 ## Installation
 
 ### Backend
@@ -104,14 +120,3 @@ curl -X POST http://localhost:8080/chat \
 - React Docs
 - GORM Docs
 
-## Development Notes (Cursor)
-- Generate backend code first (Go Fiber API with routes, models, auth).
-- Commit: `checkpoint: backend completed`
-- Generate frontend (React + Tailwind + Vite).
-- Commit: `checkpoint: frontend scaffolded`
-- Generate Docker setup (backend + frontend + compose).
-- Commit: `checkpoint: dockerized project`
-- Generate READMEs.
-- Commit: `checkpoint: docs added`
-- Add calendar dashboard.
-- Commit: `checkpoint: added admin calendar dashboard with CRUD create/edit/delete`
