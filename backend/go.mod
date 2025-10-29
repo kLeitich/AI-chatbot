@@ -3,6 +3,7 @@ module github.com/example/doctor-appointment-chatbot/backend
 go 1.18
 
 require (
+	github.com/araddon/dateparse v0.0.0-20240209095650-3a10207752f6
 	github.com/gofiber/fiber/v2 v2.52.2
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	golang.org/x/crypto v0.29.0

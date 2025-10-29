@@ -14,17 +14,32 @@ func chatHandler(c *fiber.Ctx) error {
 	prev := getConversation(req.SessionID)
 	prompt := buildPrompt(req.Message, prev)
 	extract, err := runOllama(prompt)
-	if err != nil {
-		return c.Status(fiber.StatusOK).JSON(ChatResponse{Message: "I couldn't parse that. Could you rephrase with date and time?"})
+
+	// Prepare appointment from AI if available
+	ap := Appointment{}
+	if err == nil {
+		ap = Appointment{
+			PatientName: strings.TrimSpace(extract.PatientName),
+			Doctor:      strings.TrimSpace(extract.Doctor),
+			Date:        strings.TrimSpace(extract.Date),
+			Time:        strings.TrimSpace(extract.Time),
+			Reason:      strings.TrimSpace(extract.Reason),
+			Status:      "pending",
+		}
 	}
 
-	ap := Appointment{
-		PatientName: strings.TrimSpace(extract.PatientName),
-		Doctor:      strings.TrimSpace(extract.Doctor),
-		Date:        strings.TrimSpace(extract.Date),
-		Time:        strings.TrimSpace(extract.Time),
-		Reason:      strings.TrimSpace(extract.Reason),
-		Status:      "pending",
+	// Fallback to local parsing if AI failed or missing critical fields
+	if ap.Date == "" || !isValidDate(ap.Date) || ap.Time == "" || !isValidTime(ap.Time) {
+		if guess, ok := tryLocalParse(req.Message); ok {
+			if ap.PatientName == "" {
+				ap.PatientName = guess.PatientName
+			}
+			if ap.Doctor == "" {
+				ap.Doctor = guess.Doctor
+			}
+			ap.Date = guess.Date
+			ap.Time = guess.Time
+		}
 	}
 
 	state := prev
@@ -34,7 +49,7 @@ func chatHandler(c *fiber.Ctx) error {
 
 	// validate extracted fields; only create if all valid
 	if ap.PatientName == "" || ap.Doctor == "" || !isValidDate(ap.Date) || !isValidTime(ap.Time) {
-		return c.Status(fiber.StatusOK).JSON(ChatResponse{Message: "I need patient, doctor, date (YYYY-MM-DD) and time (HH:MM). Please confirm."})
+		return c.Status(fiber.StatusOK).JSON(ChatResponse{Message: "I couldn't parse that. Could you rephrase with patient, doctor, date (YYYY-MM-DD), and time (HH:MM)?"})
 	}
 
 	if err := db.Create(&ap).Error; err != nil {
