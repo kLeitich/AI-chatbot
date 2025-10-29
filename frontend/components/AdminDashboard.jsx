@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import api from '../lib/api'
 import AppointmentTable from './AppointmentTable'
@@ -13,6 +13,14 @@ export default function AdminDashboard() {
   const [calendarMode, setCalendarMode] = useState('month')
   const [currentDate, setCurrentDate] = useState(new Date())
   const router = useRouter()
+
+  // Filters
+  const [fPatient, setFPatient] = useState('')
+  const [fDoctor, setFDoctor] = useState('')
+  const [fDate, setFDate] = useState('')
+  const [fTime, setFTime] = useState('')
+  const [fReason, setFReason] = useState('')
+  const [fStatus, setFStatus] = useState('')
 
   const load = async () => {
     try {
@@ -29,6 +37,22 @@ export default function AdminDashboard() {
   }
 
   useEffect(() => { load() }, [])
+
+  const filtered = useMemo(() => {
+    const match = (val, q) => String(val || '').toLowerCase().includes(String(q || '').toLowerCase())
+    return (appointments || []).filter((a) =>
+      match(a.patient_name, fPatient) &&
+      match(a.doctor, fDoctor) &&
+      (fDate ? String(a.date || '').startsWith(fDate) : true) &&
+      match(a.time, fTime) &&
+      match(a.reason, fReason) &&
+      (fStatus ? String(a.status || '') === fStatus : true)
+    )
+  }, [appointments, fPatient, fDoctor, fDate, fTime, fReason, fStatus])
+
+  const clearFilters = () => {
+    setFPatient(''); setFDoctor(''); setFDate(''); setFTime(''); setFReason(''); setFStatus('')
+  }
 
   const onDelete = async (a) => {
     if (!confirm(`Delete appointment #${a.id}?`)) return
@@ -49,11 +73,16 @@ export default function AdminDashboard() {
 
   const onAddFromCalendar = (draft) => { setEditing({ ...draft }) }
 
+  const onAddFromTable = () => {
+    setEditing({ patient_name: '', doctor: '', date: '', time: '', reason: '', status: 'pending' })
+  }
+
   return (
     <div className="max-w-5xl mx-auto p-4 space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Admin Dashboard</h1>
         <div className="flex items-center gap-3">
+          <button className="px-3 py-1 rounded bg-blue-600 text-white" onClick={onAddFromTable}>New</button>
           <div className="inline-flex border rounded overflow-hidden">
             <button className={`px-3 py-1 text-sm ${view === 'table' ? 'bg-blue-600 text-white' : 'bg-white'}`} onClick={() => setView('table')}>Table</button>
             <button className={`px-3 py-1 text-sm ${view === 'calendar' ? 'bg-blue-600 text-white' : 'bg-white'}`} onClick={() => setView('calendar')}>Calendar</button>
@@ -67,12 +96,34 @@ export default function AdminDashboard() {
           <button className="text-sm text-red-600" onClick={() => { localStorage.removeItem('token'); router.replace('/admin/login') }}>Log out</button>
         </div>
       </div>
+
+      {view === 'table' && (
+        <div className="bg-white border rounded p-3 shadow space-y-2">
+          <div className="grid grid-cols-6 gap-2">
+            <input value={fPatient} onChange={(e)=>setFPatient(e.target.value)} className="border rounded p-2" placeholder="Filter patient" />
+            <input value={fDoctor} onChange={(e)=>setFDoctor(e.target.value)} className="border rounded p-2" placeholder="Filter doctor" />
+            <input value={fDate} onChange={(e)=>setFDate(e.target.value)} className="border rounded p-2" placeholder="Filter date YYYY-MM-DD" />
+            <input value={fTime} onChange={(e)=>setFTime(e.target.value)} className="border rounded p-2" placeholder="Filter time HH:MM" />
+            <input value={fReason} onChange={(e)=>setFReason(e.target.value)} className="border rounded p-2" placeholder="Filter reason" />
+            <select value={fStatus} onChange={(e)=>setFStatus(e.target.value)} className="border rounded p-2">
+              <option value="">All statuses</option>
+              <option value="pending">pending</option>
+              <option value="confirmed">confirmed</option>
+              <option value="cancelled">cancelled</option>
+            </select>
+          </div>
+          <div className="flex justify-end">
+            <button className="text-sm text-gray-600 hover:underline" onClick={clearFilters}>Clear filters</button>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <p>Loading...</p>
       ) : view === 'table' ? (
-        <AppointmentTable appointments={appointments} onEdit={setEditing} onDelete={onDelete} />
+        <AppointmentTable appointments={filtered} onEdit={setEditing} onDelete={onDelete} />
       ) : (
-        <Calendar view={calendarMode} date={currentDate} onChangeDate={setCurrentDate} appointments={appointments} onAdd={onAddFromCalendar} onEdit={setEditing} onDelete={onDelete} />
+        <Calendar view={calendarMode} date={currentDate} onChangeDate={setCurrentDate} appointments={filtered} onAdd={onAddFromCalendar} onEdit={setEditing} onDelete={onDelete} />
       )}
 
       {editing && (

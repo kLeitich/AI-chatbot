@@ -23,13 +23,16 @@ export default function Chatbot() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [toast, setToast] = useState(null)
+  const [sessionId, setSessionId] = useState('')
   const bottomRef = useRef(null)
 
-  const sessionId = useMemo(() => {
+  // Initialize sessionId on client only
+  useEffect(() => {
+    if (typeof window === 'undefined') return
     const k = 'chat_session_id'
     let v = localStorage.getItem(k)
     if (!v) { v = uuid(); localStorage.setItem(k, v) }
-    return v
+    setSessionId(v)
   }, [])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading])
@@ -41,7 +44,9 @@ export default function Chatbot() {
     setInput('')
     setLoading(true)
     try {
-      const res = await api.post('/chat', { message: userText, session_id: sessionId })
+      const payload = { message: userText }
+      if (sessionId) payload.session_id = sessionId
+      const res = await api.post('/chat', payload)
       const { message, reply, appointment } = res.data || {}
       const aiText = reply || message || "Hmm, I didn’t catch that."
       setMessages((prev) => [...prev, { role: 'ai', text: aiText }])
