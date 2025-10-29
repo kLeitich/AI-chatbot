@@ -41,8 +41,13 @@ function weekLabel(date) {
   return `${fmt(start)} - ${fmt(end)}`
 }
 
-const HOURS = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`) // 00:00 - 23:00
+const HOURS = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`)
 const SLOT_PX = 48
+
+function weekdayWithDate(d) {
+  const name = d.toLocaleDateString(undefined, { weekday: 'short' })
+  return `${name} ${d.getDate()}`
+}
 
 // Lightweight hash to color appointments consistently by doctor
 function colorFor(ap) {
@@ -95,7 +100,6 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
   const minuteOfDay = now.getHours() * 60 + now.getMinutes()
   const nowTopPx = (minuteOfDay / (24 * 60)) * (HOURS.length * SLOT_PX)
 
-  // Auto-scroll to current time when week view is active and now is within displayed week
   useEffect(() => {
     if (view !== 'week') return
     const start = new Date(gridStart)
@@ -121,9 +125,10 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
       {view === 'month' ? (
         <>
           <div className="grid grid-cols-7 text-xs font-medium bg-neutral-800 border-b border-neutral-700">
-            {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d) => (
-              <div key={d} className="px-2 py-2">{d}</div>
-            ))}
+            {Array.from({ length: 7 }).map((_, i) => {
+              const d = addDays(gridStart, i)
+              return <div key={i} className="px-2 py-2">{weekdayWithDate(d)}</div>
+            })}
           </div>
           <div className="grid grid-cols-7">
             {gridDays.map((d, idx) => {
@@ -136,7 +141,7 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
                   </div>
                   <div className="space-y-1">
                     {dayAps.map((ap) => (
-                      <div key={ap.id ?? `${ap.date}-${ap.time}-${ap.patient_name}`} className={`text-xs ${colorFor(ap)} text-white/90 rounded px-2 py-1 flex items-center justify-between`}> 
+                      <div key={ap.id ?? `${ap.date}-${ap.time}-${ap.patient_name}`} className={`text-xs ${colorFor(ap)} text-white/90 rounded px-2 py-1 flex items-center justify-between`}>
                         <div className="truncate">
                           <span className="font-medium">{ap.time}</span> • {ap.patient_name} ({ap.doctor})
                         </div>
@@ -153,18 +158,15 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
           </div>
         </>
       ) : (
-        // Week view with 24-hour time-of-day grid and click-to-create
         <div className="">
-          {/* Headers */}
           <div className="grid" style={{ gridTemplateColumns: '100px repeat(7, 1fr)' }}>
             <div className="bg-neutral-800 border-b border-neutral-700 p-2 text-xs font-medium">Time</div>
-            {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d) => (
-              <div key={d} className="bg-neutral-800 border-b border-neutral-700 p-2 text-xs font-medium">{d}</div>
-            ))}
+            {Array.from({ length: 7 }).map((_, i) => {
+              const d = addDays(gridStart, i)
+              return <div key={i} className="bg-neutral-800 border-b border-neutral-700 p-2 text-xs font-medium">{weekdayWithDate(d)}</div>
+            })}
           </div>
-          {/* Scrollable hour grid with overlay */}
           <div className="relative max-h-[70vh] overflow-y-auto" ref={scrollRef}>
-            {/* Now line */}
             {ymd(now) >= ymd(gridStart) && ymd(now) <= ymd(addDays(gridStart, 6)) && (
               <div className="absolute left-[100px] right-0" style={{ top: nowTopPx }}>
                 <div className="h-px bg-red-500" />
