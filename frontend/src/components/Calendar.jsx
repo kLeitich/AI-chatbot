@@ -41,6 +41,8 @@ function weekLabel(date) {
   return `${fmt(start)} - ${fmt(end)}`
 }
 
+const HOURS = Array.from({ length: 12 }, (_, i) => `${String(i + 8).padStart(2, '0')}:00`) // 08:00 - 19:00
+
 export default function Calendar({ date = new Date(), view = 'month', appointments = [], onAdd, onEdit, onDelete, onChangeDate }) {
   const monthStart = startOfMonth(date)
   const gridStart = view === 'month' ? startOfWeek(monthStart) : startOfWeek(date)
@@ -81,38 +83,81 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
         <div className="text-sm font-semibold">{headerLabel}</div>
         <div className="w-20" />
       </div>
-      <div className="grid grid-cols-7 text-xs font-medium bg-gray-100 border-b">
-        {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d) => (
-          <div key={d} className="px-2 py-2">{d}</div>
-        ))}
-      </div>
-      <div className="grid grid-cols-7">
-        {gridDays.map((d, idx) => {
-          const key = ymd(d)
-          const dayAps = apByDate[key] || []
-          return (
-            <div key={idx} className={`border p-2 h-32 overflow-y-auto ${view === 'month' && !isSameMonth(d) ? 'bg-gray-50 text-gray-400' : 'bg-white'}`}>
-              <div className="flex items-center justify-between mb-1">
-                <div className="text-xs font-semibold">{d.getDate()}</div>
-                <button className="text-xs text-blue-600" onClick={() => onAdd && onAdd({ date: key, time: '', patient_name: '', doctor: '', reason: '', status: 'pending' })}>+ Add</button>
-              </div>
-              <div className="space-y-1">
-                {dayAps.map((ap) => (
-                  <div key={ap.id ?? `${ap.date}-${ap.time}-${ap.patient_name}`} className="text-xs bg-blue-50 border border-blue-200 rounded px-2 py-1 flex items-center justify-between">
-                    <div className="truncate">
-                      <span className="font-medium">{ap.time}</span> • {ap.patient_name} ({ap.doctor})
-                    </div>
-                    <div className="flex gap-1 ml-2 flex-shrink-0">
-                      <button className="text-amber-600" title="Edit" onClick={() => onEdit && onEdit(ap)}>✏️</button>
-                      <button className="text-red-600" title="Delete" onClick={() => onDelete && onDelete(ap)}>🗑️</button>
-                    </div>
+
+      {view === 'month' ? (
+        <>
+          <div className="grid grid-cols-7 text-xs font-medium bg-gray-100 border-b">
+            {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d) => (
+              <div key={d} className="px-2 py-2">{d}</div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7">
+            {gridDays.map((d, idx) => {
+              const key = ymd(d)
+              const dayAps = apByDate[key] || []
+              return (
+                <div key={idx} className={`border p-2 h-32 overflow-y-auto ${view === 'month' && !isSameMonth(d) ? 'bg-gray-50 text-gray-400' : 'bg-white'}`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-xs font-semibold">{d.getDate()}</div>
+                    <button className="text-xs text-blue-600" onClick={() => onAdd && onAdd({ date: key, time: '', patient_name: '', doctor: '', reason: '', status: 'pending' })}>+ Add</button>
                   </div>
-                ))}
-              </div>
-            </div>
-          )
-        })}
-      </div>
+                  <div className="space-y-1">
+                    {dayAps.map((ap) => (
+                      <div key={ap.id ?? `${ap.date}-${ap.time}-${ap.patient_name}`} className="text-xs bg-blue-50 border border-blue-200 rounded px-2 py-1 flex items-center justify-between">
+                        <div className="truncate">
+                          <span className="font-medium">{ap.time}</span> • {ap.patient_name} ({ap.doctor})
+                        </div>
+                        <div className="flex gap-1 ml-2 flex-shrink-0">
+                          <button className="text-amber-600" title="Edit" onClick={() => onEdit && onEdit(ap)}>✏️</button>
+                          <button className="text-red-600" title="Delete" onClick={() => onDelete && onDelete(ap)}>🗑️</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </>
+      ) : (
+        // Week view with time-of-day grid
+        <div className="">
+          <div className="grid" style={{ gridTemplateColumns: '100px repeat(7, 1fr)' }}>
+            <div className="bg-gray-100 border-b p-2 text-xs font-medium">Time</div>
+            {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d) => (
+              <div key={d} className="bg-gray-100 border-b p-2 text-xs font-medium">{d}</div>
+            ))}
+            {HOURS.map((h) => (
+              <>
+                <div key={`h-${h}`} className="border-r p-2 text-xs text-gray-600">{h}</div>
+                {Array.from({ length: 7 }).map((_, dayIdx) => {
+                  const day = addDays(gridStart, dayIdx)
+                  const key = ymd(day)
+                  const items = (apByDate[key] || []).filter((ap) => ap.time?.startsWith(h))
+                  return (
+                    <div key={`${key}-${h}`} className="border p-1 min-h-[44px]">
+                      <div className="flex flex-col gap-1">
+                        {items.map((ap) => (
+                          <div key={ap.id ?? `${ap.date}-${ap.time}-${ap.patient_name}`} className="text-xs bg-blue-50 border border-blue-200 rounded px-2 py-1 flex items-center justify-between">
+                            <div className="truncate">
+                              <span className="font-medium">{ap.time}</span> • {ap.patient_name}
+                            </div>
+                            <div className="flex gap-1 ml-2 flex-shrink-0">
+                              <button className="text-amber-600" title="Edit" onClick={() => onEdit && onEdit(ap)}>✏️</button>
+                              <button className="text-red-600" title="Delete" onClick={() => onDelete && onDelete(ap)}>🗑️</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <button className="mt-1 text-[10px] text-blue-600" onClick={() => onAdd && onAdd({ date: key, time: h, patient_name: '', doctor: '', reason: '', status: 'pending' })}>+ Add</button>
+                    </div>
+                  )
+                })}
+              </>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
