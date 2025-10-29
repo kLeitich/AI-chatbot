@@ -51,15 +51,14 @@ func QueryOllama(model, prompt string) (string, error) {
 // AskForAppointmentFromMessage tries JSON extraction first.
 // Returns (Appointment, friendlyReply, error). If an Appointment is complete/valid, friendlyReply can be empty.
 func AskForAppointmentFromMessage(model, userMessage string, prev ConversationState) (Appointment, string, error) {
-	// System prompt: personable, JSON extraction if possible
+	// Personable, JSON extraction if possible with explicit schema
 	var b strings.Builder
 	b.WriteString("You are a friendly medical assistant that helps people book doctor appointments.\n")
 	b.WriteString("You respond politely, naturally, and conversationally.\n")
-	b.WriteString("If the user wants to book an appointment, extract structured info in JSON format:\n")
-	b.WriteString("{\"intent\": \"book\", \"patient_name\": \"...\", \"doctor\": \"...\", \"date\": \"YYYY-MM-DD\", \"time\": \"HH:MM\", \"reason\": \"...\"}\n")
-	b.WriteString("If you cannot extract this info confidently, still output a JSON object with {\"intent\": \"chat\"}.\n")
+	b.WriteString("When the user wants to book an appointment, output ONLY JSON with keys: intent, patient_name, doctor, date (YYYY-MM-DD), time (HH:MM 24h), reason.\n")
+	b.WriteString("If you cannot extract confidently, still output JSON with intent=chat.\n")
 	if prev.Draft.PatientName != "" || prev.Draft.Doctor != "" || prev.Draft.Date != "" || prev.Draft.Time != "" || prev.Draft.Reason != "" {
-		b.WriteString("Previous context (may be partial): ")
+		b.WriteString("Known so far (may be partial, prefer reusing unless contradicted): ")
 		prevJSON, _ := json.Marshal(prev.Draft)
 		b.Write(prevJSON)
 		b.WriteString("\n")
@@ -73,7 +72,6 @@ func AskForAppointmentFromMessage(model, userMessage string, prev ConversationSt
 		return Appointment{}, "", err
 	}
 	text := strings.TrimSpace(raw)
-	// Extract last JSON object
 	start := strings.LastIndex(text, "{")
 	end := strings.LastIndex(text, "}")
 	if start == -1 || end == -1 || end < start {
@@ -85,6 +83,22 @@ func AskForAppointmentFromMessage(model, userMessage string, prev ConversationSt
 	}
 
 	if strings.ToLower(strings.TrimSpace(ex.Intent)) == "book" {
+		// Merge with memory: fill missing from previous draft
+		if ex.PatientName == "" {
+			ex.PatientName = prev.Draft.PatientName
+		}
+		if ex.Doctor == "" {
+			ex.Doctor = prev.Draft.Doctor
+		}
+		if ex.Date == "" {
+			ex.Date = prev.Draft.Date
+		}
+		if ex.Time == "" {
+			ex.Time = prev.Draft.Time
+		}
+		if ex.Reason == "" {
+			ex.Reason = prev.Draft.Reason
+		}
 		ap := Appointment{
 			PatientName: strings.TrimSpace(ex.PatientName),
 			Doctor:      strings.TrimSpace(ex.Doctor),
@@ -95,25 +109,27 @@ func AskForAppointmentFromMessage(model, userMessage string, prev ConversationSt
 		}
 		return ap, "", nil
 	}
-	// Not a book intent; ask convo follow-up separately
 	return Appointment{}, "", errors.New("not book intent")
 }
 
-// AskConversationalReply asks the model for a short, friendly plain-text reply.
+// AskConversationalReply asks the model for a short, friendly plain-text reply, leveraging memory if present.
 func AskConversationalReply(model, message string, prev ConversationState) (string, error) {
 	var b strings.Builder
 	b.WriteString("You are a friendly assistant helping with doctor appointments.\n")
-	b.WriteString("Respond politely, conversationally, and help the user clarify date/time or doctor details if missing.\n")
-	b.WriteString("Keep responses short, natural, and avoid repeating the same phrasing.\n")
-	if prev.Draft.PatientName != "" || prev.Draft.Doctor != "" || prev.Draft.Date != "" || prev.Draft.Time != "" || prev.Draft.Reason != "" {
-		b.WriteString("Known so far: ")
-		prevJSON, _ := json.Marshal(prev.Draft)
-		b.Write(prevJSON)
-		b.WriteString("\n")
+	b.WriteString("Respond politely and conversationally. If details are missing, ask a brief follow-up.\n")
+	b.WriteString("Use a warm human tone. Avoid repetitive phrasing.\n")
+	if prev.Draft.Doctor != "" || prev.Draft.Date != "" || prev.Draft.Time != "" {
+		b.WriteString("You may reference prior details to confirm, e.g., 'You mentioned ")
+		if prev.Draft.Doctor != "" { b.WriteString(prev.Draft.Doctor) }
+		if prev.Draft.Date != "" || prev.Draft.Time != "" { b.WriteString(" on ") }
+		if prev.Draft.Date != "" { b.WriteString(prev.Draft.Date) }
+		if prev.Draft.Time != "" { b.WriteString(" at "+prev.Draft.Time) }
+		b.WriteString(" earlier — should I use that?'\n")
 	}
 	b.WriteString("User: ")
 	b.WriteString(message)
 	b.WriteString("\nAssistant (plain text): ")
+
 	raw, err := QueryOllama(model, b.String())
 	if err != nil {
 		return "", err
