@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 
 function startOfMonth(date) {
   const d = new Date(date.getFullYear(), date.getMonth(), 1)
@@ -46,6 +46,7 @@ const SLOT_PX = 48
 
 export default function Calendar({ date = new Date(), view = 'month', appointments = [], onAdd, onEdit, onDelete, onChangeDate }) {
   const [now, setNow] = useState(new Date())
+  const scrollRef = useRef(null)
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 60 * 1000)
     return () => clearInterval(id)
@@ -81,6 +82,17 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
 
   const minuteOfDay = now.getHours() * 60 + now.getMinutes()
   const nowTopPx = (minuteOfDay / (24 * 60)) * (HOURS.length * SLOT_PX)
+
+  // Auto-scroll to current time when week view is active and now is within displayed week
+  useEffect(() => {
+    if (view !== 'week') return
+    const start = new Date(gridStart)
+    const end = addDays(start, 7)
+    if (now >= start && now < end && scrollRef.current) {
+      const target = Math.max(0, nowTopPx - 200)
+      scrollRef.current.scrollTo({ top: target, behavior: 'smooth' })
+    }
+  }, [view, gridStart, nowTopPx, now])
 
   return (
     <div className="border rounded bg-white shadow">
@@ -138,8 +150,8 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
               <div key={d} className="bg-gray-100 border-b p-2 text-xs font-medium">{d}</div>
             ))}
           </div>
-          {/* Hour grid with overlay */}
-          <div className="relative">
+          {/* Scrollable hour grid with overlay */}
+          <div className="relative max-h-[70vh] overflow-y-auto" ref={scrollRef}>
             {/* Now line */}
             {ymd(now) >= ymd(gridStart) && ymd(now) <= ymd(addDays(gridStart, 6)) && (
               <div className="absolute left-[100px] right-0" style={{ top: nowTopPx }}>
