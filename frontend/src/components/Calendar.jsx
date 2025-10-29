@@ -20,11 +20,19 @@ function addDays(date, n) {
   d.setDate(d.getDate() + n)
   return d
 }
+function addMonths(date, n) {
+  const d = new Date(date)
+  d.setMonth(d.getMonth() + n)
+  return d
+}
 function ymd(d) {
   return d.toISOString().slice(0, 10)
 }
+function monthLabel(date) {
+  return date.toLocaleString(undefined, { month: 'long', year: 'numeric' })
+}
 
-export default function Calendar({ date = new Date(), appointments = [], onAdd, onEdit, onDelete }) {
+export default function Calendar({ date = new Date(), appointments = [], onAdd, onEdit, onDelete, onChangeDate }) {
   const monthStart = startOfMonth(date)
   const monthEnd = endOfMonth(date)
   const gridStart = startOfWeek(monthStart)
@@ -50,6 +58,15 @@ export default function Calendar({ date = new Date(), appointments = [], onAdd, 
 
   return (
     <div className="border rounded bg-white shadow">
+      <div className="flex items-center justify-between px-3 py-2 border-b">
+        <div className="inline-flex gap-2">
+          <button className="px-2 py-1 border rounded" onClick={() => onChangeDate && onChangeDate(addMonths(date, -1))}>←</button>
+          <button className="px-2 py-1 border rounded" onClick={() => onChangeDate && onChangeDate(new Date())}>Today</button>
+          <button className="px-2 py-1 border rounded" onClick={() => onChangeDate && onChangeDate(addMonths(date, 1))}>→</button>
+        </div>
+        <div className="text-sm font-semibold">{monthLabel(date)}</div>
+        <div className="w-20" />
+      </div>
       <div className="grid grid-cols-7 text-xs font-medium bg-gray-100 border-b">
         {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d) => (
           <div key={d} className="px-2 py-2">{d}</div>

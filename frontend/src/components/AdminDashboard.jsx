@@ -9,7 +9,7 @@ export default function AdminDashboard() {
   const [editing, setEditing] = useState(null)
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState('table') // 'table' | 'calendar'
-  const [currentDate] = useState(new Date())
+  const [currentDate, setCurrentDate] = useState(new Date())
   const nav = useNavigate()
 
   const load = async () => {
@@ -46,7 +46,6 @@ export default function AdminDashboard() {
   }
 
   const onAddFromCalendar = (draft) => {
-    // open modal with draft values (date pre-filled)
     setEditing({ ...draft })
   }
 
@@ -67,7 +66,7 @@ export default function AdminDashboard() {
       ) : view === 'table' ? (
         <AppointmentTable appointments={appointments} onEdit={setEditing} onDelete={onDelete} />
       ) : (
-        <Calendar date={currentDate} appointments={appointments} onAdd={onAddFromCalendar} onEdit={setEditing} onDelete={onDelete} />
+        <Calendar date={currentDate} onChangeDate={setCurrentDate} appointments={appointments} onAdd={onAddFromCalendar} onEdit={setEditing} onDelete={onDelete} />
       )}
 
       {editing && (
