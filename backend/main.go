@@ -32,6 +32,7 @@ func main() {
 
 	admin := app.Group("/admin", jwtMiddleware)
 	admin.Get("/appointments", listAppointments)
+	admin.Post("/appointments", createAppointment)
 	admin.Put("/appointments/:id", updateAppointment)
 	admin.Delete("/appointments/:id", deleteAppointment)
 

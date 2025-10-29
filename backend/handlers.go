@@ -53,6 +53,24 @@ func listAppointments(c *fiber.Ctx) error {
 	return c.JSON(apps)
 }
 
+func createAppointment(c *fiber.Ctx) error {
+	var in Appointment
+	if err := c.BodyParser(&in); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
+	}
+	in.PatientName = strings.TrimSpace(in.PatientName)
+	in.Doctor = strings.TrimSpace(in.Doctor)
+	in.Reason = strings.TrimSpace(in.Reason)
+	if in.Status == "" { in.Status = "pending" }
+	if in.PatientName == "" || in.Doctor == "" || !isValidDate(in.Date) || !isValidTime(in.Time) {
+		return fiber.NewError(fiber.StatusBadRequest, "patient, doctor, valid date and time required")
+	}
+	if err := db.Create(&in).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to create")
+	}
+	return c.Status(fiber.StatusCreated).JSON(in)
+}
+
 func updateAppointment(c *fiber.Ctx) error {
 	id := c.Params("id")
 	var ap Appointment
