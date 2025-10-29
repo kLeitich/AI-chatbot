@@ -5,7 +5,8 @@ A Go + React full-stack chatbot integrated with Ollama to handle natural languag
 ## Features
 - Natural chat-driven booking
 - AI-driven date/time extraction
-- Admin panel for appointment management
+- Admin panel for appointment management (table + calendar views)
+- Calendar dashboard to view and manage appointments (create/edit/delete)
 - Offline LLM integration (Ollama)
 - Dockerized full stack
 
@@ -62,6 +63,7 @@ ollama pull phi3
 | POST | /chat | AI booking handler |
 | POST | /login | Admin login |
 | GET | /admin/appointments | List appointments |
+| POST | /admin/appointments | Create appointment |
 | PUT | /admin/appointments/:id | Update |
 | DELETE | /admin/appointments/:id | Delete |
 
@@ -111,3 +113,5 @@ curl -X POST http://localhost:8080/chat \
 - Commit: `checkpoint: dockerized project`
 - Generate READMEs.
 - Commit: `checkpoint: docs added`
+- Add calendar dashboard.
+- Commit: `checkpoint: added admin calendar dashboard with CRUD create/edit/delete`
