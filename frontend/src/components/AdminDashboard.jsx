@@ -9,6 +9,7 @@ export default function AdminDashboard() {
   const [editing, setEditing] = useState(null)
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState('table') // 'table' | 'calendar'
+  const [calendarMode, setCalendarMode] = useState('month') // 'month' | 'week'
   const [currentDate, setCurrentDate] = useState(new Date())
   const nav = useNavigate()
 
@@ -58,6 +59,12 @@ export default function AdminDashboard() {
             <button className={`px-3 py-1 text-sm ${view === 'table' ? 'bg-blue-600 text-white' : 'bg-white'}`} onClick={() => setView('table')}>Table</button>
             <button className={`px-3 py-1 text-sm ${view === 'calendar' ? 'bg-blue-600 text-white' : 'bg-white'}`} onClick={() => setView('calendar')}>Calendar</button>
           </div>
+          {view === 'calendar' && (
+            <div className="inline-flex border rounded overflow-hidden">
+              <button className={`px-3 py-1 text-sm ${calendarMode === 'month' ? 'bg-gray-900 text-white' : 'bg-white'}`} onClick={() => setCalendarMode('month')}>Month</button>
+              <button className={`px-3 py-1 text-sm ${calendarMode === 'week' ? 'bg-gray-900 text-white' : 'bg-white'}`} onClick={() => setCalendarMode('week')}>Week</button>
+            </div>
+          )}
           <button className="text-sm text-red-600" onClick={() => { localStorage.removeItem('token'); nav('/admin/login') }}>Log out</button>
         </div>
       </div>
@@ -66,7 +73,7 @@ export default function AdminDashboard() {
       ) : view === 'table' ? (
         <AppointmentTable appointments={appointments} onEdit={setEditing} onDelete={onDelete} />
       ) : (
-        <Calendar date={currentDate} onChangeDate={setCurrentDate} appointments={appointments} onAdd={onAddFromCalendar} onEdit={setEditing} onDelete={onDelete} />
+        <Calendar view={calendarMode} date={currentDate} onChangeDate={setCurrentDate} appointments={appointments} onAdd={onAddFromCalendar} onEdit={setEditing} onDelete={onDelete} />
       )}
 
       {editing && (
