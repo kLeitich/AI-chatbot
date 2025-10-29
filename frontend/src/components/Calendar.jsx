@@ -44,6 +44,18 @@ function weekLabel(date) {
 const HOURS = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`) // 00:00 - 23:00
 const SLOT_PX = 48
 
+// Lightweight hash to color appointments consistently by doctor
+function colorFor(ap) {
+  if (!ap) return 'bg-sky-500'
+  if (ap.status === 'cancelled') return 'bg-gray-500'
+  if (ap.status === 'confirmed') return 'bg-emerald-500'
+  const key = (ap.doctor || ap.patient_name || '').toLowerCase()
+  let hash = 0
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0
+  const palette = ['bg-sky-500','bg-indigo-500','bg-purple-500','bg-pink-500','bg-rose-500','bg-orange-500','bg-amber-500','bg-lime-500','bg-teal-500','bg-cyan-500']
+  return palette[hash % palette.length]
+}
+
 export default function Calendar({ date = new Date(), view = 'month', appointments = [], onAdd, onEdit, onDelete, onChangeDate }) {
   const [now, setNow] = useState(new Date())
   const scrollRef = useRef(null)
@@ -95,12 +107,12 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
   }, [view, gridStart, nowTopPx, now])
 
   return (
-    <div className="border rounded bg-white shadow">
-      <div className="flex items-center justify-between px-3 py-2 border-b">
+    <div className="border rounded bg-neutral-900 text-neutral-100 shadow">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-neutral-700">
         <div className="inline-flex gap-2">
-          <button className="px-2 py-1 border rounded" onClick={goPrev}>←</button>
-          <button className="px-2 py-1 border rounded" onClick={() => onChangeDate && onChangeDate(new Date())}>Today</button>
-          <button className="px-2 py-1 border rounded" onClick={goNext}>→</button>
+          <button className="px-2 py-1 border rounded border-neutral-700 hover:bg-neutral-800" onClick={goPrev}>←</button>
+          <button className="px-2 py-1 border rounded border-neutral-700 hover:bg-neutral-800" onClick={() => onChangeDate && onChangeDate(new Date())}>Today</button>
+          <button className="px-2 py-1 border rounded border-neutral-700 hover:bg-neutral-800" onClick={goNext}>→</button>
         </div>
         <div className="text-sm font-semibold">{headerLabel}</div>
         <div className="w-20" />
@@ -108,7 +120,7 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
 
       {view === 'month' ? (
         <>
-          <div className="grid grid-cols-7 text-xs font-medium bg-gray-100 border-b">
+          <div className="grid grid-cols-7 text-xs font-medium bg-neutral-800 border-b border-neutral-700">
             {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d) => (
               <div key={d} className="px-2 py-2">{d}</div>
             ))}
@@ -118,19 +130,19 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
               const key = ymd(d)
               const dayAps = apByDate[key] || []
               return (
-                <div key={idx} className={`border p-2 h-32 overflow-y-auto ${view === 'month' && !isSameMonth(d) ? 'bg-gray-50 text-gray-400' : 'bg-white'}`}>
+                <div key={idx} className={`border border-neutral-800 p-2 h-32 overflow-y-auto ${view === 'month' && !isSameMonth(d) ? 'bg-neutral-800 text-neutral-500' : 'bg-neutral-900'}`}>
                   <div className="flex items-center justify-between mb-1">
-                    <div className="text-xs font-semibold">{d.getDate()}</div>
+                    <div className="text-xs font-semibold text-neutral-300">{d.getDate()}</div>
                   </div>
                   <div className="space-y-1">
                     {dayAps.map((ap) => (
-                      <div key={ap.id ?? `${ap.date}-${ap.time}-${ap.patient_name}`} className="text-xs bg-blue-50 border border-blue-200 rounded px-2 py-1 flex items-center justify-between">
+                      <div key={ap.id ?? `${ap.date}-${ap.time}-${ap.patient_name}`} className={`text-xs ${colorFor(ap)} text-white/90 rounded px-2 py-1 flex items-center justify-between`}> 
                         <div className="truncate">
                           <span className="font-medium">{ap.time}</span> • {ap.patient_name} ({ap.doctor})
                         </div>
                         <div className="flex gap-1 ml-2 flex-shrink-0">
-                          <button className="text-amber-600" title="Edit" onClick={() => onEdit && onEdit(ap)}>✏️</button>
-                          <button className="text-red-600" title="Delete" onClick={() => onDelete && onDelete(ap)}>🗑️</button>
+                          <button className="opacity-90 hover:opacity-100" title="Edit" onClick={() => onEdit && onEdit(ap)}>✏️</button>
+                          <button className="opacity-90 hover:opacity-100" title="Delete" onClick={() => onDelete && onDelete(ap)}>🗑️</button>
                         </div>
                       </div>
                     ))}
@@ -145,9 +157,9 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
         <div className="">
           {/* Headers */}
           <div className="grid" style={{ gridTemplateColumns: '100px repeat(7, 1fr)' }}>
-            <div className="bg-gray-100 border-b p-2 text-xs font-medium">Time</div>
+            <div className="bg-neutral-800 border-b border-neutral-700 p-2 text-xs font-medium">Time</div>
             {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d) => (
-              <div key={d} className="bg-gray-100 border-b p-2 text-xs font-medium">{d}</div>
+              <div key={d} className="bg-neutral-800 border-b border-neutral-700 p-2 text-xs font-medium">{d}</div>
             ))}
           </div>
           {/* Scrollable hour grid with overlay */}
@@ -161,7 +173,7 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
             <div className="grid" style={{ gridTemplateColumns: '100px repeat(7, 1fr)' }}>
               {HOURS.map((h) => (
                 <>
-                  <div key={`h-${h}`} className="border-r p-2 text-xs text-gray-600 h-12 leading-[48px]">{h}</div>
+                  <div key={`h-${h}`} className="border-r border-neutral-800 p-2 text-xs text-neutral-400 h-12 leading-[48px]">{h}</div>
                   {Array.from({ length: 7 }).map((_, dayIdx) => {
                     const day = addDays(gridStart, dayIdx)
                     const key = ymd(day)
@@ -175,16 +187,16 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
                       onAdd({ date: key, time: `${hh}:${minute}`, patient_name: '', doctor: '', reason: '', status: 'pending' })
                     }
                     return (
-                      <div key={`${key}-${h}`} className="border h-12 p-1 cursor-crosshair hover:bg-blue-50/30" onClick={onCellClick}>
+                      <div key={`${key}-${h}`} className="border border-neutral-800 h-12 p-1 cursor-crosshair hover:bg-neutral-800/60" onClick={onCellClick}>
                         <div className="flex flex-col gap-1 pointer-events-none">
                           {items.map((ap) => (
-                            <div key={ap.id ?? `${ap.date}-${ap.time}-${ap.patient_name}`} className="text-xs bg-blue-50 border border-blue-200 rounded px-2 py-1 flex items-center justify-between">
+                            <div key={ap.id ?? `${ap.date}-${ap.time}-${ap.patient_name}`} className={`text-xs ${colorFor(ap)} text-white/90 rounded px-2 py-1 flex items-center justify-between`}>
                               <div className="truncate">
                                 <span className="font-medium">{ap.time}</span> • {ap.patient_name}
                               </div>
                               <div className="flex gap-1 ml-2 flex-shrink-0">
-                                <button className="text-amber-600 pointer-events-auto" title="Edit" onClick={(ev) => { ev.stopPropagation(); onEdit && onEdit(ap) }}>✏️</button>
-                                <button className="text-red-600 pointer-events-auto" title="Delete" onClick={(ev) => { ev.stopPropagation(); onDelete && onDelete(ap) }}>🗑️</button>
+                                <button className="pointer-events-auto opacity-90 hover:opacity-100" title="Edit" onClick={(ev) => { ev.stopPropagation(); onEdit && onEdit(ap) }}>✏️</button>
+                                <button className="pointer-events-auto opacity-90 hover:opacity-100" title="Delete" onClick={(ev) => { ev.stopPropagation(); onDelete && onDelete(ap) }}>🗑️</button>
                               </div>
                             </div>
                           ))}
