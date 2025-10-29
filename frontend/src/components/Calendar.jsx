@@ -99,7 +99,7 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
                 <div key={idx} className={`border p-2 h-32 overflow-y-auto ${view === 'month' && !isSameMonth(d) ? 'bg-gray-50 text-gray-400' : 'bg-white'}`}>
                   <div className="flex items-center justify-between mb-1">
                     <div className="text-xs font-semibold">{d.getDate()}</div>
-                    <button className="text-xs text-blue-600" onClick={() => onAdd && onAdd({ date: key, time: '', patient_name: '', doctor: '', reason: '', status: 'pending' })}>+ Add</button>
+                    {/* No explicit add in month view */}
                   </div>
                   <div className="space-y-1">
                     {dayAps.map((ap) => (
@@ -120,7 +120,7 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
           </div>
         </>
       ) : (
-        // Week view with time-of-day grid
+        // Week view with time-of-day grid and click-to-create
         <div className="">
           <div className="grid" style={{ gridTemplateColumns: '100px repeat(7, 1fr)' }}>
             <div className="bg-gray-100 border-b p-2 text-xs font-medium">Time</div>
@@ -134,22 +134,29 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
                   const day = addDays(gridStart, dayIdx)
                   const key = ymd(day)
                   const items = (apByDate[key] || []).filter((ap) => ap.time?.startsWith(h))
+                  const onCellClick = (e) => {
+                    if (!onAdd) return
+                    const rect = e.currentTarget.getBoundingClientRect()
+                    const y = e.clientY - rect.top
+                    const minute = y < rect.height / 2 ? '00' : '30'
+                    const hh = h.slice(0, 2)
+                    onAdd({ date: key, time: `${hh}:${minute}`, patient_name: '', doctor: '', reason: '', status: 'pending' })
+                  }
                   return (
-                    <div key={`${key}-${h}`} className="border p-1 min-h-[44px]">
-                      <div className="flex flex-col gap-1">
+                    <div key={`${key}-${h}`} className="border min-h-[44px] p-1 cursor-crosshair hover:bg-blue-50/30" onClick={onCellClick}>
+                      <div className="flex flex-col gap-1 pointer-events-none">
                         {items.map((ap) => (
                           <div key={ap.id ?? `${ap.date}-${ap.time}-${ap.patient_name}`} className="text-xs bg-blue-50 border border-blue-200 rounded px-2 py-1 flex items-center justify-between">
                             <div className="truncate">
                               <span className="font-medium">{ap.time}</span> • {ap.patient_name}
                             </div>
                             <div className="flex gap-1 ml-2 flex-shrink-0">
-                              <button className="text-amber-600" title="Edit" onClick={() => onEdit && onEdit(ap)}>✏️</button>
-                              <button className="text-red-600" title="Delete" onClick={() => onDelete && onDelete(ap)}>🗑️</button>
+                              <button className="text-amber-600 pointer-events-auto" title="Edit" onClick={(ev) => { ev.stopPropagation(); onEdit && onEdit(ap) }}>✏️</button>
+                              <button className="text-red-600 pointer-events-auto" title="Delete" onClick={(ev) => { ev.stopPropagation(); onDelete && onDelete(ap) }}>🗑️</button>
                             </div>
                           </div>
                         ))}
                       </div>
-                      <button className="mt-1 text-[10px] text-blue-600" onClick={() => onAdd && onAdd({ date: key, time: h, patient_name: '', doctor: '', reason: '', status: 'pending' })}>+ Add</button>
                     </div>
                   )
                 })}
