@@ -41,7 +41,7 @@ function weekLabel(date) {
   return `${fmt(start)} - ${fmt(end)}`
 }
 
-const HOURS = Array.from({ length: 12 }, (_, i) => `${String(i + 8).padStart(2, '0')}:00`) // 08:00 - 19:00
+const HOURS = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`) // 00:00 - 23:00
 
 export default function Calendar({ date = new Date(), view = 'month', appointments = [], onAdd, onEdit, onDelete, onChangeDate }) {
   const monthStart = startOfMonth(date)
@@ -99,7 +99,6 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
                 <div key={idx} className={`border p-2 h-32 overflow-y-auto ${view === 'month' && !isSameMonth(d) ? 'bg-gray-50 text-gray-400' : 'bg-white'}`}>
                   <div className="flex items-center justify-between mb-1">
                     <div className="text-xs font-semibold">{d.getDate()}</div>
-                    {/* No explicit add in month view */}
                   </div>
                   <div className="space-y-1">
                     {dayAps.map((ap) => (
@@ -120,7 +119,7 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
           </div>
         </>
       ) : (
-        // Week view with time-of-day grid and click-to-create
+        // Week view with 24-hour time-of-day grid and click-to-create
         <div className="">
           <div className="grid" style={{ gridTemplateColumns: '100px repeat(7, 1fr)' }}>
             <div className="bg-gray-100 border-b p-2 text-xs font-medium">Time</div>
