@@ -12,52 +12,56 @@ func chatHandler(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
 	}
 	prev := getConversation(req.SessionID)
-	prompt := buildPrompt(req.Message, prev)
-	extract, err := runOllama(prompt)
 
-	// Prepare appointment from AI if available
-	ap := Appointment{}
-	if err == nil {
-		ap = Appointment{
-			PatientName: strings.TrimSpace(extract.PatientName),
-			Doctor:      strings.TrimSpace(extract.Doctor),
-			Date:        strings.TrimSpace(extract.Date),
-			Time:        strings.TrimSpace(extract.Time),
-			Reason:      strings.TrimSpace(extract.Reason),
-			Status:      "pending",
+	// Stage 1: attempt structured extraction
+	ap, _, err := AskForAppointmentFromMessage("", req.Message, prev)
+
+	// If structured extraction produced a complete appointment, save it
+	if err == nil && ap.Doctor != "" && isValidDate(ap.Date) && isValidTime(ap.Time) {
+		state := prev
+		state.LastUserMessage = req.Message
+		state.Draft = ap
+		setConversation(req.SessionID, state)
+
+		if err := db.Create(&ap).Error; err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "failed to create appointment")
 		}
+		state.LastAIMessage = "Appointment booked"
+		setConversation(req.SessionID, state)
+		return c.JSON(ChatResponse{Message: "Appointment booked", Appointment: &ap})
 	}
 
-	// Fallback to local parsing if AI failed or missing critical fields
-	if ap.Date == "" || !isValidDate(ap.Date) || ap.Time == "" || !isValidTime(ap.Time) {
-		if guess, ok := tryLocalParse(req.Message); ok {
-			if ap.PatientName == "" {
-				ap.PatientName = guess.PatientName
-			}
-			if ap.Doctor == "" {
-				ap.Doctor = guess.Doctor
-			}
-			ap.Date = guess.Date
-			ap.Time = guess.Time
+	// Optional: quick local parse to help fill missing pieces; if still incomplete we'll do conversational
+	if guess, ok := tryLocalParse(req.Message); ok {
+		if ap.PatientName == "" { ap.PatientName = strings.TrimSpace(guess.PatientName) }
+		if ap.Doctor == "" { ap.Doctor = strings.TrimSpace(guess.Doctor) }
+		if ap.Date == "" { ap.Date = guess.Date }
+		if ap.Time == "" { ap.Time = guess.Time }
+	}
+	if ap.Doctor != "" && isValidDate(ap.Date) && isValidTime(ap.Time) {
+		state := prev
+		state.LastUserMessage = req.Message
+		state.Draft = ap
+		setConversation(req.SessionID, state)
+		if err := db.Create(&ap).Error; err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "failed to create appointment")
 		}
+		state.LastAIMessage = "Appointment booked"
+		setConversation(req.SessionID, state)
+		return c.JSON(ChatResponse{Message: "Appointment booked", Appointment: &ap})
 	}
 
+	// Stage 2: conversational guidance
+	reply, convErr := AskConversationalReply("", req.Message, prev)
+	if convErr != nil || strings.TrimSpace(reply) == "" {
+		reply = "Hi! I can help you book an appointment. Which doctor and date work for you?"
+	}
+	// Persist draft (even if partial) to maintain context
 	state := prev
 	state.LastUserMessage = req.Message
 	state.Draft = ap
 	setConversation(req.SessionID, state)
-
-	// validate extracted fields; only create if all valid
-	if ap.PatientName == "" || ap.Doctor == "" || !isValidDate(ap.Date) || !isValidTime(ap.Time) {
-		return c.Status(fiber.StatusOK).JSON(ChatResponse{Message: "I couldn't parse that. Could you rephrase with patient, doctor, date (YYYY-MM-DD), and time (HH:MM)?"})
-	}
-
-	if err := db.Create(&ap).Error; err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "failed to create appointment")
-	}
-	state.LastAIMessage = "Appointment booked"
-	setConversation(req.SessionID, state)
-	return c.JSON(ChatResponse{Message: "Appointment booked", Appointment: &ap})
+	return c.JSON(fiber.Map{"reply": strings.TrimSpace(reply)})
 }
 
 func listAppointments(c *fiber.Ctx) error {
