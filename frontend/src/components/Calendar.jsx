@@ -111,12 +111,12 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
   }, [view, gridStart, nowTopPx, now])
 
   return (
-    <div className="border rounded bg-white text-gray-900 dark:bg-neutral-900 dark:text-neutral-100 shadow">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-neutral-700">
+    <div className="border rounded bg-white text-gray-900 shadow">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
         <div className="inline-flex gap-2">
-          <button className="px-2 py-1 border rounded border-gray-200 hover:bg-gray-50 dark:border-neutral-700 dark:hover:bg-neutral-800" onClick={goPrev}>←</button>
-          <button className="px-2 py-1 border rounded border-gray-200 hover:bg-gray-50 dark:border-neutral-700 dark:hover:bg-neutral-800" onClick={() => onChangeDate && onChangeDate(new Date())}>Today</button>
-          <button className="px-2 py-1 border rounded border-gray-200 hover:bg-gray-50 dark:border-neutral-700 dark:hover:bg-neutral-800" onClick={goNext}>→</button>
+          <button className="px-2 py-1 border rounded border-gray-200 hover:bg-gray-50" onClick={goPrev}>←</button>
+          <button className="px-2 py-1 border rounded border-gray-200 hover:bg-gray-50" onClick={() => onChangeDate && onChangeDate(new Date())}>Today</button>
+          <button className="px-2 py-1 border rounded border-gray-200 hover:bg-gray-50" onClick={goNext}>→</button>
         </div>
         <div className="text-sm font-semibold">{headerLabel}</div>
         <div className="w-20" />
@@ -124,7 +124,7 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
 
       {view === 'month' ? (
         <>
-          <div className="grid grid-cols-7 text-xs font-medium bg-gray-100 border-b border-gray-200 dark:bg-neutral-800 dark:border-neutral-700">
+          <div className="grid grid-cols-7 text-xs font-medium bg-gray-100 border-b border-gray-200">
             {Array.from({ length: 7 }).map((_, i) => {
               const d = addDays(gridStart, i)
               return <div key={i} className="px-2 py-2">{weekdayWithDate(d)}</div>
@@ -135,20 +135,15 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
               const key = ymd(d)
               const dayAps = apByDate[key] || []
               return (
-                <div key={idx} className={`border p-2 h-32 overflow-y-auto border-gray-200 dark:border-neutral-800 ${view === 'month' && !isSameMonth(d) ? 'bg-gray-50 text-gray-400 dark:bg-neutral-800 dark:text-neutral-500' : 'bg-white dark:bg-neutral-900'}`}>
+                <div key={idx} className={`border p-2 h-32 overflow-y-auto border-gray-200 ${view === 'month' && !isSameMonth(d) ? 'bg-gray-50 text-gray-400' : 'bg-white'}`}>
                   <div className="flex items-center justify-between mb-1">
-                    <div className="text-xs font-semibold text-gray-700 dark:text-neutral-300">{d.getDate()}</div>
+                    <div className="text-xs font-semibold text-gray-700">{d.getDate()}</div>
                   </div>
                   <div className="space-y-1">
                     {dayAps.map((ap) => (
                       <div key={ap.id ?? `${ap.date}-${ap.time}-${ap.patient_name}`} className={`text-xs ${colorFor(ap)} text-white/90 rounded px-2 py-1 flex items-center justify-between`}>
-                        <div className="truncate">
-                          <span className="font-medium">{ap.time}</span> • {ap.patient_name} ({ap.doctor})
-                        </div>
-                        <div className="flex gap-1 ml-2 flex-shrink-0">
-                          <button className="opacity-90 hover:opacity-100" title="Edit" onClick={() => onEdit && onEdit(ap)}>✏️</button>
-                          <button className="opacity-90 hover:opacity-100" title="Delete" onClick={() => onDelete && onDelete(ap)}>🗑️</button>
-                        </div>
+                        <div className="truncate"><span className="font-medium">{ap.time}</span> • {ap.patient_name} ({ap.doctor})</div>
+                        <div className="flex gap-1 ml-2 flex-shrink-0"><button className="opacity-90 hover:opacity-100" title="Edit" onClick={() => onEdit && onEdit(ap)}>✏️</button><button className="opacity-90 hover:opacity-100" title="Delete" onClick={() => onDelete && onDelete(ap)}>🗑️</button></div>
                       </div>
                     ))}
                   </div>
@@ -160,22 +155,20 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
       ) : (
         <div className="">
           <div className="grid" style={{ gridTemplateColumns: '100px repeat(7, 1fr)' }}>
-            <div className="p-2 text-xs font-medium bg-gray-100 border-b border-gray-200 dark:bg-neutral-800 dark:border-neutral-700">Time</div>
+            <div className="p-2 text-xs font-medium bg-gray-100 border-b border-gray-200">Time</div>
             {Array.from({ length: 7 }).map((_, i) => {
               const d = addDays(gridStart, i)
-              return <div key={i} className="p-2 text-xs font-medium bg-gray-100 border-b border-gray-200 dark:bg-neutral-800 dark:border-neutral-700">{weekdayWithDate(d)}</div>
+              return <div key={i} className="p-2 text-xs font-medium bg-gray-100 border-b border-gray-200">{weekdayWithDate(d)}</div>
             })}
           </div>
           <div className="relative max-h-[70vh] overflow-y-auto" ref={scrollRef}>
             {ymd(now) >= ymd(gridStart) && ymd(now) <= ymd(addDays(gridStart, 6)) && (
-              <div className="absolute left-[100px] right-0" style={{ top: nowTopPx }}>
-                <div className="h-px bg-red-500" />
-              </div>
+              <div className="absolute left-[100px] right-0" style={{ top: nowTopPx }}><div className="h-px bg-red-500" /></div>
             )}
             <div className="grid" style={{ gridTemplateColumns: '100px repeat(7, 1fr)' }}>
               {HOURS.map((h) => (
                 <>
-                  <div key={`h-${h}`} className="border-r p-2 text-xs h-12 leading-[48px] text-gray-500 border-gray-200 dark:text-neutral-400 dark:border-neutral-800">{h}</div>
+                  <div key={`h-${h}`} className="border-r p-2 text-xs h-12 leading-[48px] text-gray-500 border-gray-200">{h}</div>
                   {Array.from({ length: 7 }).map((_, dayIdx) => {
                     const day = addDays(gridStart, dayIdx)
                     const key = ymd(day)
@@ -189,17 +182,12 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
                       onAdd({ date: key, time: `${hh}:${minute}`, patient_name: '', doctor: '', reason: '', status: 'pending' })
                     }
                     return (
-                      <div key={`${key}-${h}`} className="border h-12 p-1 cursor-crosshair hover:bg-gray-50/70 border-gray-200 dark:hover:bg-neutral-800/60 dark:border-neutral-800" onClick={onCellClick}>
+                      <div key={`${key}-${h}`} className="border h-12 p-1 cursor-crosshair hover:bg-gray-50/70 border-gray-200" onClick={onCellClick}>
                         <div className="flex flex-col gap-1 pointer-events-none">
                           {items.map((ap) => (
                             <div key={ap.id ?? `${ap.date}-${ap.time}-${ap.patient_name}`} className={`text-xs ${colorFor(ap)} text-white/90 rounded px-2 py-1 flex items-center justify-between`}>
-                              <div className="truncate">
-                                <span className="font-medium">{ap.time}</span> • {ap.patient_name}
-                              </div>
-                              <div className="flex gap-1 ml-2 flex-shrink-0">
-                                <button className="pointer-events-auto opacity-90 hover:opacity-100" title="Edit" onClick={(ev) => { ev.stopPropagation(); onEdit && onEdit(ap) }}>✏️</button>
-                                <button className="pointer-events-auto opacity-90 hover:opacity-100" title="Delete" onClick={(ev) => { ev.stopPropagation(); onDelete && onDelete(ap) }}>🗑️</button>
-                              </div>
+                              <div className="truncate"><span className="font-medium">{ap.time}</span> • {ap.patient_name}</div>
+                              <div className="flex gap-1 ml-2 flex-shrink-0"><button className="pointer-events-auto opacity-90 hover:opacity-100" title="Edit" onClick={(ev) => { ev.stopPropagation(); onEdit && onEdit(ap) }}>✏️</button><button className="pointer-events-auto opacity-90 hover:opacity-100" title="Delete" onClick={(ev) => { ev.stopPropagation(); onDelete && onDelete(ap) }}>🗑️</button></div>
                             </div>
                           ))}
                         </div>
