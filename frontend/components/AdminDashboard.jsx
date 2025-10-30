@@ -23,6 +23,7 @@ export default function AdminDashboard() {
   const [fStatus, setFStatus] = useState('')
 
   const load = async () => {
+    setLoading(true)
     try {
       const res = await api.get('/admin/appointments')
       setAppointments(res.data || [])
@@ -68,11 +69,10 @@ export default function AdminDashboard() {
       await api.post('/admin/appointments', rest)
     }
     setEditing(null)
-    load()
+    await load() // Always refresh for modal adds/edits
   }
 
   const onAddFromCalendar = (draft) => { setEditing({ ...draft }) }
-
   const onAddFromTable = () => {
     setEditing({ patient_name: '', doctor: '', date: '', time: '', reason: '', status: 'pending' })
   }
