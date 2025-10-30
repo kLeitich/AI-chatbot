@@ -1,68 +1,53 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
 )
 
+// Remove duplicate type declarations here. models.go defines structs.
+
 func chatHandler(c *fiber.Ctx) error {
 	var req ChatRequest
 	if err := c.BodyParser(&req); err != nil {
+		fmt.Printf("[DEBUG] Invalid request body: %v\n", err)
 		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
 	}
-	prev := getConversation(req.SessionID)
 
-	// Stage 1: attempt structured extraction
-	ap, _, err := AskForAppointmentFromMessage("", req.Message, prev)
+	userMsg := strings.TrimSpace(req.Message)
+	if userMsg == "" {
+		fmt.Println("[DEBUG] Empty message payload")
+		return c.JSON(fiber.Map{"reply": "Please type a message to continue."})
+	}
+	fmt.Printf("\n[DEBUG] Incoming chat: session=%s message=%q\n", req.SessionID, userMsg)
 
-	// If structured extraction produced a complete appointment, save it
-	if err == nil && ap.Doctor != "" && isValidDate(ap.Date) && isValidTime(ap.Time) {
-		state := prev
-		state.LastUserMessage = req.Message
-		state.Draft = ap
-		setConversation(req.SessionID, state)
+	ap, reply, err := AskForAppointmentFromMessage("", userMsg, req.SessionID)
+	if err != nil {
+		fmt.Printf("[DEBUG] AI error/fallback: %v\n", err)
+		return c.JSON(fiber.Map{"reply": "Sorry, I had trouble processing that. Could you try again?"})
+	}
 
+	if ap.Doctor != "" && ap.Date != "" && ap.Time != "" && ap.PatientName != "" {
+		fmt.Printf("[DEBUG] Booking appointment: %+v\n", ap)
 		if err := db.Create(&ap).Error; err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "failed to create appointment")
+			fmt.Printf("[DEBUG] DB create failed: %v\n", err)
+			return fiber.NewError(fiber.StatusInternalServerError, "failed to save appointment")
 		}
-		state.LastAIMessage = "Appointment booked"
-		setConversation(req.SessionID, state)
-		return c.JSON(ChatResponse{Message: "Appointment booked", Appointment: &ap})
+		fmt.Println("[DEBUG] Appointment booked and returned to frontend")
+		return c.JSON(ChatResponse{
+			Message:     "Appointment booked successfully.",
+			Reply:       reply,
+			Appointment: &ap,
+		})
 	}
 
-	// Optional: quick local parse to help fill missing pieces; if still incomplete we'll do conversational
-	if guess, ok := tryLocalParse(req.Message); ok {
-		if ap.PatientName == "" { ap.PatientName = strings.TrimSpace(guess.PatientName) }
-		if ap.Doctor == "" { ap.Doctor = strings.TrimSpace(guess.Doctor) }
-		if ap.Date == "" { ap.Date = guess.Date }
-		if ap.Time == "" { ap.Time = guess.Time }
-	}
-	if ap.Doctor != "" && isValidDate(ap.Date) && isValidTime(ap.Time) {
-		state := prev
-		state.LastUserMessage = req.Message
-		state.Draft = ap
-		setConversation(req.SessionID, state)
-		if err := db.Create(&ap).Error; err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "failed to create appointment")
-		}
-		state.LastAIMessage = "Appointment booked"
-		setConversation(req.SessionID, state)
-		return c.JSON(ChatResponse{Message: "Appointment booked", Appointment: &ap})
-	}
-
-	// Stage 2: conversational guidance
-	reply, convErr := AskConversationalReply("", req.Message, prev)
-	if convErr != nil || strings.TrimSpace(reply) == "" {
-		reply = "Hi! I can help you book an appointment. Which doctor and date work for you?"
-	}
-	// Persist draft (even if partial) to maintain context
-	state := prev
-	state.LastUserMessage = req.Message
-	state.Draft = ap
-	setConversation(req.SessionID, state)
+	fmt.Printf("[DEBUG] Fallback reply returned: %s\n", strings.TrimSpace(reply))
 	return c.JSON(fiber.Map{"reply": strings.TrimSpace(reply)})
 }
+
+// -------------------- CRUD Handlers --------------------
 
 func listAppointments(c *fiber.Ctx) error {
 	var apps []Appointment
@@ -80,7 +65,9 @@ func createAppointment(c *fiber.Ctx) error {
 	in.PatientName = strings.TrimSpace(in.PatientName)
 	in.Doctor = strings.TrimSpace(in.Doctor)
 	in.Reason = strings.TrimSpace(in.Reason)
-	if in.Status == "" { in.Status = "pending" }
+	if in.Status == "" {
+		in.Status = "pending"
+	}
 	if in.PatientName == "" || in.Doctor == "" || !isValidDate(in.Date) || !isValidTime(in.Time) {
 		return fiber.NewError(fiber.StatusBadRequest, "patient, doctor, valid date and time required")
 	}
@@ -94,19 +81,21 @@ func updateAppointment(c *fiber.Ctx) error {
 	id := c.Params("id")
 	var ap Appointment
 	if err := db.First(&ap, id).Error; err != nil {
-		return fiber.NewError(fiber.StatusNotFound, "not found")
+		return fiber.NewError(fiber.StatusNotFound, "appointment not found")
 	}
+
 	var in Appointment
 	if err := c.BodyParser(&in); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
 	}
-	// Allow edits; validate date/time when provided
+
 	if in.Date != "" && !isValidDate(in.Date) {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid date")
 	}
 	if in.Time != "" && !isValidTime(in.Time) {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid time")
 	}
+
 	ap.PatientName = choose(in.PatientName, ap.PatientName)
 	ap.Doctor = choose(in.Doctor, ap.Doctor)
 	ap.Date = choose(in.Date, ap.Date)
@@ -115,6 +104,7 @@ func updateAppointment(c *fiber.Ctx) error {
 	if in.Status != "" {
 		ap.Status = in.Status
 	}
+
 	if err := db.Save(&ap).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to update")
 	}
@@ -124,10 +114,12 @@ func updateAppointment(c *fiber.Ctx) error {
 func deleteAppointment(c *fiber.Ctx) error {
 	id := c.Params("id")
 	if err := db.Delete(&Appointment{}, id).Error; err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "failed to delete")
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to delete appointment")
 	}
 	return c.SendStatus(fiber.StatusNoContent)
 }
+
+// -------------------- Helpers --------------------
 
 func choose(a, b string) string {
 	if strings.TrimSpace(a) != "" {

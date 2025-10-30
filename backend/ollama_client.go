@@ -3,23 +3,32 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
+	"fmt"
+	"net/http"
 	"os"
-	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
 
-type ollamaExtraction struct {
-	Intent      string `json:"intent"`
-	PatientName string `json:"patient_name"`
-	Doctor      string `json:"doctor"`
-	Date        string `json:"date"`
-	Time        string `json:"time"`
-	Reason      string `json:"reason"`
+// SessionInfo tracks extracted appointment details per session
+type SessionInfo struct {
+	Doctor  string
+	Date    string
+	Time    string
+	Patient string
+	Reason  string
 }
 
-// QueryOllama runs the model with the given prompt and returns raw stdout text.
+// In-memory session-based conversation history
+var conversationMemory = make(map[string][]string)
+
+// Track extracted info per session
+var sessionInfo = make(map[string]map[string]string)
+
+//
+// -------------------- Query Ollama --------------------
+//
 func QueryOllama(model, prompt string) (string, error) {
 	if model == "" {
 		model = os.Getenv("OLLAMA_MODEL")
@@ -27,112 +36,273 @@ func QueryOllama(model, prompt string) (string, error) {
 			model = "phi3"
 		}
 	}
-	cmd := exec.Command("ollama", "run", model)
-	cmd.Stdin = bytes.NewBufferString(prompt)
-	cmd.Env = os.Environ()
-	var out bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &stderr
-	cmdErr := make(chan error, 1)
-	go func() { cmdErr <- cmd.Run() }()
-	select {
-	case err := <-cmdErr:
-		if err != nil {
-			return "", errors.New(strings.TrimSpace(stderr.String()))
-		}
-	case <-time.After(30 * time.Second):
-		_ = cmd.Process.Kill()
-		return "", errors.New("ollama timed out")
-	}
-	return out.String(), nil
-}
+	fmt.Printf("\n[DEBUG] [OLLAMA REQUEST] model=%s\nPrompt:\n%s\n", model, prompt)
 
-// AskForAppointmentFromMessage tries JSON extraction first.
-// Returns (Appointment, friendlyReply, error). If an Appointment is complete/valid, friendlyReply can be empty.
-func AskForAppointmentFromMessage(model, userMessage string, prev ConversationState) (Appointment, string, error) {
-	// Personable, JSON extraction if possible with explicit schema
-	var b strings.Builder
-	b.WriteString("You are a friendly medical assistant that helps people book doctor appointments.\n")
-	b.WriteString("You respond politely, naturally, and conversationally.\n")
-	b.WriteString("When the user wants to book an appointment, output ONLY JSON with keys: intent, patient_name, doctor, date (YYYY-MM-DD), time (HH:MM 24h), reason.\n")
-	b.WriteString("If you cannot extract confidently, still output JSON with intent=chat.\n")
-	if prev.Draft.PatientName != "" || prev.Draft.Doctor != "" || prev.Draft.Date != "" || prev.Draft.Time != "" || prev.Draft.Reason != "" {
-		b.WriteString("Known so far (may be partial, prefer reusing unless contradicted): ")
-		prevJSON, _ := json.Marshal(prev.Draft)
-		b.Write(prevJSON)
-		b.WriteString("\n")
-	}
-	b.WriteString("User: ")
-	b.WriteString(userMessage)
-	b.WriteString("\nAssistant JSON: ")
-
-	raw, err := QueryOllama(model, b.String())
+	body, _ := json.Marshal(map[string]interface{}{
+		"model":  model,
+		"prompt": prompt,
+		"stream": true,
+	})
+	resp, err := http.Post("http://localhost:11434/api/generate", "application/json", bytes.NewBuffer(body))
 	if err != nil {
-		return Appointment{}, "", err
+		fmt.Printf("[DEBUG] Ollama API call failed: %v\n", err)
+		return "", err
 	}
-	text := strings.TrimSpace(raw)
-	start := strings.LastIndex(text, "{")
-	end := strings.LastIndex(text, "}")
-	if start == -1 || end == -1 || end < start {
-		return Appointment{}, "", errors.New("no json")
-	}
-	var ex ollamaExtraction
-	if json.Unmarshal([]byte(text[start:end+1]), &ex) != nil {
-		return Appointment{}, "", errors.New("bad json")
+	defer resp.Body.Close()
+	
+	fmt.Printf("[DEBUG] Ollama HTTP Status: %d\n", resp.StatusCode)
+	if resp.StatusCode != 200 {
+		fmt.Printf("[DEBUG] Non-200 response from Ollama!\n")
 	}
 
-	if strings.ToLower(strings.TrimSpace(ex.Intent)) == "book" {
-		// Merge with memory: fill missing from previous draft
-		if ex.PatientName == "" {
-			ex.PatientName = prev.Draft.PatientName
+	var output strings.Builder
+	dec := json.NewDecoder(resp.Body)
+	for dec.More() {
+		var chunk map[string]interface{}
+		if err := dec.Decode(&chunk); err == nil {
+			if txt, ok := chunk["response"].(string); ok {
+				output.WriteString(txt)
+			}
 		}
-		if ex.Doctor == "" {
-			ex.Doctor = prev.Draft.Doctor
-		}
-		if ex.Date == "" {
-			ex.Date = prev.Draft.Date
-		}
-		if ex.Time == "" {
-			ex.Time = prev.Draft.Time
-		}
-		if ex.Reason == "" {
-			ex.Reason = prev.Draft.Reason
-		}
-		ap := Appointment{
-			PatientName: strings.TrimSpace(ex.PatientName),
-			Doctor:      strings.TrimSpace(ex.Doctor),
-			Date:        strings.TrimSpace(ex.Date),
-			Time:        strings.TrimSpace(ex.Time),
-			Reason:      strings.TrimSpace(ex.Reason),
-			Status:      "pending",
-		}
-		return ap, "", nil
 	}
-	return Appointment{}, "", errors.New("not book intent")
+	result := strings.TrimSpace(output.String())
+	fmt.Printf("[DEBUG] Ollama raw output:\n%s\n", result)
+	return result, nil
 }
 
-// AskConversationalReply asks the model for a short, friendly plain-text reply, leveraging memory if present.
-func AskConversationalReply(model, message string, prev ConversationState) (string, error) {
-	var b strings.Builder
-	b.WriteString("You are a friendly assistant helping with doctor appointments.\n")
-	b.WriteString("Respond politely and conversationally. If details are missing, ask a brief follow-up.\n")
-	b.WriteString("Use a warm human tone. Avoid repetitive phrasing.\n")
-	if prev.Draft.Doctor != "" || prev.Draft.Date != "" || prev.Draft.Time != "" {
-		b.WriteString("You may reference prior details to confirm, e.g., 'You mentioned ")
-		if prev.Draft.Doctor != "" { b.WriteString(prev.Draft.Doctor) }
-		if prev.Draft.Date != "" || prev.Draft.Time != "" { b.WriteString(" on ") }
-		if prev.Draft.Date != "" { b.WriteString(prev.Draft.Date) }
-		if prev.Draft.Time != "" { b.WriteString(" at "+prev.Draft.Time) }
-		b.WriteString(" earlier — should I use that?'\n")
+//
+// -------------------- Extract Info from Message --------------------
+//
+func extractInfoFromMessage(message string, info map[string]string) {
+	msg := strings.ToLower(message)
+	
+	// Extract doctor name (Dr. + name)
+	if strings.Contains(msg, "dr.") || strings.Contains(msg, "dr ") || strings.Contains(msg, "doctor") {
+		re := regexp.MustCompile(`(?i)dr\.?\s+(\w+)`)
+		if matches := re.FindStringSubmatch(message); len(matches) > 1 {
+			info["doctor"] = "Dr. " + strings.Title(matches[1])
+			fmt.Printf("[DEBUG] Extracted doctor: %s\n", info["doctor"])
+		}
 	}
-	b.WriteString("User: ")
-	b.WriteString(message)
-	b.WriteString("\nAssistant (plain text): ")
+	
+	// Extract date patterns (31 oct, oct 31, 2025-10-31)
+	monthMap := map[string]string{
+		"jan": "01", "feb": "02", "mar": "03", "apr": "04",
+		"may": "05", "jun": "06", "jul": "07", "aug": "08",
+		"sep": "09", "oct": "10", "nov": "11", "dec": "12",
+	}
+	
+	// Pattern: "31 oct" or "oct 31"
+	dateRe := regexp.MustCompile(`(?i)(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|(?i)(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})`)
+	if matches := dateRe.FindStringSubmatch(msg); len(matches) > 0 {
+		var day, month string
+		if matches[1] != "" {
+			day = matches[1]
+			month = monthMap[strings.ToLower(matches[2])]
+		} else {
+			month = monthMap[strings.ToLower(matches[3])]
+			day = matches[4]
+		}
+		if len(day) == 1 {
+			day = "0" + day
+		}
+		year := time.Now().Year()
+		info["date"] = fmt.Sprintf("%d-%s-%s", year, month, day)
+		fmt.Printf("[DEBUG] Extracted date: %s\n", info["date"])
+	}
+	
+	// Extract time (2pm, 14:00, 2:30pm)
+	timeRe := regexp.MustCompile(`(?i)(\d{1,2}):?(\d{2})?\s*(am|pm)?`)
+	if matches := timeRe.FindStringSubmatch(msg); len(matches) > 1 {
+		hour := matches[1]
+		minute := "00"
+		if matches[2] != "" {
+			minute = matches[2]
+		}
+		
+		// Convert to 24-hour format if am/pm specified
+		if matches[3] != "" {
+			h := 0
+			fmt.Sscanf(hour, "%d", &h)
+			if strings.ToLower(matches[3]) == "pm" && h < 12 {
+				h += 12
+			} else if strings.ToLower(matches[3]) == "am" && h == 12 {
+				h = 0
+			}
+			hour = fmt.Sprintf("%02d", h)
+		} else if len(hour) == 1 {
+			hour = "0" + hour
+		}
+		
+		info["time"] = fmt.Sprintf("%s:%s", hour, minute)
+		fmt.Printf("[DEBUG] Extracted time: %s\n", info["time"])
+	}
+	
+	// Extract patient name (look for capitalized names, but not if it's part of doctor)
+	if !strings.Contains(msg, "dr.") && !strings.Contains(msg, "dr ") && !strings.Contains(msg, "doctor") {
+		nameRe := regexp.MustCompile(`\b([A-Z][a-z]+)\s+([A-Z][a-z]+)\b`)
+		if matches := nameRe.FindStringSubmatch(message); len(matches) > 2 {
+			info["patient"] = matches[1] + " " + matches[2]
+			fmt.Printf("[DEBUG] Extracted patient name: %s\n", info["patient"])
+		}
+	}
+	
+	// Extract reason - common medical reasons
+	reasons := []string{"checkup", "check-up", "check up", "follow-up", "followup", 
+		"consultation", "examination", "test", "review", "surgery", "procedure"}
+	for _, reason := range reasons {
+		if strings.Contains(msg, reason) {
+			info["reason"] = reason
+			fmt.Printf("[DEBUG] Extracted reason: %s\n", info["reason"])
+			break
+		}
+	}
+}
 
-	raw, err := QueryOllama(model, b.String())
+//
+// -------------------- AskForAppointmentFromMessage --------------------
+//
+func AskForAppointmentFromMessage(model, userMessage, sessionID string) (Appointment, string, error) {
+	systemPrompt := `
+You are a helpful medical assistant.
+
+IMPORTANT RULES:
+- If the user wants to book an appointment AND provides all required details, ONLY respond with a pure JSON object in this schema:
+  {"intent": "book", "doctor": "<Doctor Name>", "date": "YYYY-MM-DD", "time": "HH:MM", "patient_name": "<Name>", "reason": "<Reason>", "reply": "short friendly confirmation"}
+- DO NOT say anything before or after the JSON. DO NOT use markdown. DO NOT wrap the JSON in code blocks. DO NOT explain or apologize. DO NOT say 'Here is your appointment:' or similar. ONLY the raw JSON.
+- If ANY required field (doctor, date, time, patient name) is missing, DO NOT send JSON. Reply in *plain text* and ask for only the missing info politely and naturally.
+- NEVER reply with both JSON and text; one or the other.
+- Confirmation should sound human: e.g., "Got it, John! I've booked you with Dr. Mercy on October 31st at 11am."
+`
+
+	history := strings.Join(conversationMemory[sessionID], "\n")
+	fullPrompt := fmt.Sprintf("%s\nConversation so far:\n%s\nUser: %s", systemPrompt, history, userMessage)
+
+	raw, err := QueryOllama(model, fullPrompt)
+	if err != nil {
+		fmt.Printf("[DEBUG] Model unreachable or Query error: %v\n", err)
+		return Appointment{}, "Sorry, I couldn’t reach the AI model.", err
+	}
+	raw = strings.TrimSpace(raw)
+	conversationMemory[sessionID] = append(conversationMemory[sessionID], "User: "+userMessage, "AI: "+raw)
+
+	// Extract JSON
+	start := strings.Index(raw, "{")
+	end := strings.LastIndex(raw, "}")
+	if start != -1 && end != -1 && end > start {
+		jsonStr := raw[start : end+1]
+		var tmp struct {
+			Intent      string `json:"intent"`
+			PatientName string `json:"patient_name"`
+			Doctor      string `json:"doctor"`
+			Date        string `json:"date"`
+			Time        string `json:"time"`
+			Reason      string `json:"reason"`
+			Reply       string `json:"reply"`
+		}
+		if err := json.Unmarshal([]byte(jsonStr), &tmp); err == nil && tmp.Intent == "book" {
+			app := Appointment{
+				PatientName: tmp.PatientName,
+				Doctor:      tmp.Doctor,
+				Date:        tmp.Date,
+				Time:        tmp.Time,
+				Reason:      tmp.Reason,
+				Status:      "pending",
+			}
+			if app.PatientName == "" {
+				fmt.Println("[DEBUG] Appointment missing patient name. Prompt user for name.")
+				return Appointment{}, "Could I please have your full name to confirm the booking?", nil
+			}
+			fmt.Printf("[DEBUG] Extracted appointment: %+v\n", app)
+			if err := SaveAppointment(app); err != nil {
+				fmt.Println("[DB DEBUG] Save err:", err)
+			}
+			reply := tmp.Reply
+			if reply == "" {
+				reply = fmt.Sprintf("Got it, %s! I've booked you with %s on %s at %s.", app.PatientName, app.Doctor, app.Date, app.Time)
+			}
+			return app, reply, nil
+		} else if err != nil {
+			fmt.Printf("[DEBUG] JSON unmarshal error: %v\nraw: %s\n", err, jsonStr)
+		}
+	}
+	// fallback if no JSON but valid text
+	if len(strings.Fields(raw)) > 3 {
+		fmt.Printf("[DEBUG] Ollama fallback (no JSON, text reply): %s\n", raw)
+		return Appointment{}, raw, nil
+	}
+	// Fallback ask
+	reply, err2 := AskConversationalReply(model, userMessage)
+	if err2 != nil {
+		fmt.Printf("[DEBUG] AskConversationalReply error: %v\n", err2)
+		return Appointment{}, "I’m here to help! Could you please rephrase that?", err2
+	}
+	fmt.Printf("[DEBUG] Conversational fallback reply: %s\n", reply)
+	return Appointment{}, reply, nil
+}
+
+//
+// -------------------- Build Smart Response --------------------
+//
+func buildSmartResponse(info map[string]string, lastMessage string) string {
+	// Acknowledge what we just received
+	var acknowledgment string
+	
+	if info["doctor"] != "" && info["date"] != "" {
+		acknowledgment = fmt.Sprintf("Great! %s on %s. ", info["doctor"], info["date"])
+	} else if info["doctor"] != "" {
+		acknowledgment = fmt.Sprintf("Got it, %s. ", info["doctor"])
+	} else if info["date"] != "" {
+		acknowledgment = fmt.Sprintf("Okay, %s. ", info["date"])
+	}
+	
+	// Ask for next missing piece
+	if info["doctor"] == "" {
+		return acknowledgment + "Which doctor would you like to see?"
+	}
+	if info["date"] == "" {
+		return acknowledgment + "What date works for you?"
+	}
+	if info["time"] == "" {
+		return acknowledgment + "What time would you prefer?"
+	}
+	if info["patient"] == "" {
+		return acknowledgment + "Could I get your full name for the booking?"
+	}
+	if info["reason"] == "" {
+		return acknowledgment + "What's the reason for your visit?"
+	}
+	
+	return "Could you provide more details about your appointment?"
+}
+
+//
+// -------------------- Conversational fallback --------------------
+//
+func AskConversationalReply(model, message string) (string, error) {
+	prompt := `You are a friendly assistant helping patients schedule doctor appointments.
+Respond conversationally and naturally – use warm, human language.
+If unclear, ask follow-up questions like:
+"Which doctor would you like to see?" or "What date works best for you?"
+Avoid formal or robotic tone. Be brief, kind, and engaging.
+User: ` + message
+
+	resp, err := QueryOllama(model, prompt)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(raw), nil
+
+	reply := strings.TrimSpace(resp)
+	if reply == "" {
+		reply = "Sure! Could you tell me which doctor and date you'd like?"
+	}
+	return reply, nil
+}
+
+//
+// -------------------- DB Save (stub) --------------------
+//
+func SaveAppointment(a Appointment) error {
+	fmt.Printf("✅ [Saved Appointment] %+v\n", a)
+	return nil
 }

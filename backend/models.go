@@ -30,7 +30,8 @@ type ChatRequest struct {
 }
 
 type ChatResponse struct {
-	Message     string       `json:"message"`
+	Message     string       `json:"message,omitempty"`
+	Reply       string       `json:"reply,omitempty"`
 	Appointment *Appointment `json:"appointment,omitempty"`
 }
 
