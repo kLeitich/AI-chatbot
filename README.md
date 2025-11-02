@@ -1,152 +1,186 @@
 # AI-Powered Doctor Appointment Chatbot
 
-A full-stack AI chatbot for scheduling doctor appointments, built with Go (Fiber) for the backend and Next.js (React) for the frontend, using Ollama for natural language processing.
+A Go + React full-stack chatbot integrated with Groq API to handle natural language appointment scheduling with intelligent conversation state management.
 
 ## Features
-- **Natural Language Booking**: Schedule appointments through a simple chat interface.
-- **AI-Powered NLP**: Uses a local Ollama model (e.g., Phi-3, Llama3) to understand and extract appointment details from user messages.
-- **Admin Dashboard**: A comprehensive dashboard for staff to manage appointments.
-- **Dual-View Interface**: View appointments in a filterable table and weekly/monthly view.
-- **CRUD Operations**: Admins can create, read, update, and delete appointments.
-- **Dockerized**: Fully containerized with Docker Compose for easy setup and deployment.
-- **Persistent State**: Uses SQLite for data storage and JWT for secure admin sessions.
-
-## Tech Stack
-
-| Area      | Technology                               |
-|-----------|------------------------------------------|
-| **Backend**   | Go, Fiber, GORM, SQLite, JWT             |
-| **Frontend**  | Next.js, React, Tailwind CSS, Axios      |
-| **AI/NLP**    | Ollama (self-hosted)                     |
-| **DevOps**    | Docker, Docker Compose, Nginx            |
+- Natural chat-driven booking with conversational memory
+- AI-driven extraction of doctor, date, time, patient name, and reason
+- Smart conversation state tracking (never asks for information already provided)
+- Automatic time format conversion (4pm → 16:00)
+- Context-aware responses that remember previous messages
+- Admin panel for appointment management (table + calendar views)
+- Calendar dashboard to view and manage appointments (create/edit/delete)
+- Cloud LLM integration (Groq API)
+- Dockerized full stack
+- Automatic .env file loading
 
 ## System Requirements
 
 | Component | Version |
-|-----------|---------|
-| Go        | 1.20+   |
-| Node.js   | 18+     |
-| Ollama    | Latest  |
-| Docker    | 24+     |
+|---|---|
+| Go | 1.20+ |
+| Node.js | 18+ |
+| Groq API Key | Required ([Get one here](https://console.groq.com/)) |
+| Docker | 24+ (optional) |
 
 ## Environment Variables
 
-Create `.env` files for each service by copying the example files:
+The backend automatically loads environment variables from a `.env` file if it exists. Create per-service env files by copying the examples:
 
 ```bash
-# For the backend
+# Backend
 cp backend/env.example backend/.env
+# Then edit backend/.env and add your GROQ_API_KEY
 
-# For the frontend
-cp frontend/env.example frontend/.env.local
+# Frontend
+cp frontend/env.example frontend/.env
 ```
 
-### Backend (`backend/.env`)
-- `PORT`: Port for the Go server (e.g., `8080`).
-- `JWT_SECRET`: Secret key for signing JWTs.
-- `OLLAMA_MODEL`: The Ollama model to use (e.g., `phi3`).
-- `SQLITE_PATH`: Path to the SQLite database file (e.g., `appointments.db`).
-- `DEFAULT_ADMIN_EMAIL`: Default admin user email.
-- `DEFAULT_ADMIN_PASSWORD`: Default admin user password.
+**Backend (.env)**:
+- `PORT` (default: 8080)
+- `JWT_SECRET` (default: supersecret)
+- `GROQ_API_KEY` (**required** - get from [Groq Console](https://console.groq.com/))
+- `GROQ_MODEL` (default: llama-3.3-70b-versatile)
+- `SQLITE_PATH` (default: appointments.db)
+- `DEFAULT_ADMIN_EMAIL` (default: admin@example.com)
+- `DEFAULT_ADMIN_PASSWORD` (default: admin123)
 
-### Frontend (`frontend/.env.local`)
-- `NEXT_PUBLIC_API_URL`: The absolute URL of the backend API (e.g., `http://localhost:8080`).
+**Frontend (.env)**: `VITE_API_URL` (default: http://localhost:8080)
 
-## Local Development Setup
+## Installation
 
-### 1. Run Ollama
-First, ensure the Ollama service is running and you have pulled a model:
-```bash
-# Start the Ollama server in the background
-ollama serve &
+### Backend
 
-# Pull a model (phi3 is a good, small starting point)
-ollama pull phi3
-```
+1. **Get a Groq API Key**:
+   - Sign up at [Groq Console](https://console.groq.com/)
+   - Create an API key
 
-### 2. Run the Backend
-```bash
-cd backend
-go mod tidy
-go run .
-```
-The backend server will start on the port specified in your `.env` file (e.g., http://localhost:8080).
+2. **Setup environment**:
+   ```bash
+   cd backend
+   cp env.example .env
+   # Edit .env and add your GROQ_API_KEY
+   ```
 
-### 3. Run the Frontend
+3. **Run the backend**:
+   ```bash
+   go mod tidy
+   go run .
+   ```
+
+### Frontend
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-The Next.js frontend will be available at http://localhost:3000.
 
 ## Docker Deployment
-
-To run the entire stack (Frontend, Backend, Nginx) using Docker:
 ```bash
-# Make sure you have created the .env files first
 docker-compose up --build
 ```
 
-Access the application:
-- **Chatbot & Admin Panel**: http://localhost
-- **Backend API (if needed directly)**: http://localhost:8080
+Access:
+- Frontend → http://localhost
+- Backend → http://localhost:8080
 
-*Note: For Docker deployment, Ollama must be running on the host machine and accessible from the Docker containers.*
+**Note**: For Docker deployment, ensure `GROQ_API_KEY` is set in the backend service environment variables.
 
-## Default Admin Credentials
+## Default Admin
 
-| Email             | Password |
-|-------------------|----------|
-| `admin@example.com` | `admin123` |
-
-These can be changed in the `backend/.env` file.
+| Email | Password |
+|---|---|
+| admin@example.com | admin123 |
 
 ## API Endpoints
 
-| Method   | Endpoint                  | Description                               | Auth      |
-|----------|---------------------------|-------------------------------------------|-----------|
-| `POST`   | `/chat`                   | Send a message to the chatbot for processing. | Public    |
-| `POST`   | `/login`                  | Authenticate an admin user.               | Public    |
-| `GET`    | `/admin/appointments`     | List all appointments.                    | JWT Token |
-| `POST`   | `/admin/appointments`     | Create a new appointment.                 | JWT Token |
-| `PUT`    | `/admin/appointments/:id` | Update an existing appointment.           | JWT Token |
-| `DELETE` | `/admin/appointments/:id` | Delete an appointment.                    | JWT Token |
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | /chat | AI booking handler |
+| POST | /login | Admin login |
+| GET | /admin/appointments | List appointments |
+| POST | /admin/appointments | Create appointment |
+| PUT | /admin/appointments/:id | Update |
+| DELETE | /admin/appointments/:id | Delete |
 
 ## Example Chat Request
+
+The chatbot supports natural language booking with conversation memory:
+
 ```bash
+# Single message booking
 curl -X POST http://localhost:8080/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "Book me an appointment with Dr. Kim tomorrow at 10am"}'
+  -d '{"message": "Book me with Dr. Kim for 3 nov at 11am", "session_id": "user123"}'
+
+# Multi-turn conversation (session_id maintains context)
+curl -X POST http://localhost:8080/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Kevin leitich, i would like to see Wangechi", "session_id": "user123"}'
+
+curl -X POST http://localhost:8080/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "3 nov at 4pm", "session_id": "user123"}'
 ```
 
 ## Expected Response
+
+**Partial information** (asking for missing details):
 ```json
 {
-  "message": "Appointment booked",
+  "reply": "What date would you like to schedule for?"
+}
+```
+
+**Complete booking**:
+```json
+{
+  "message": "Perfect! I've booked your appointment with Dr. Kim on 2025-11-03 at 16:00 for checkup. Thank you, Kevin Leitich!",
   "appointment": {
-    "patient_name": "John Doe",
+    "patient_name": "Kevin Leitich",
     "doctor": "Dr. Kim",
-    "date": "2025-10-28",
-    "time": "10:00",
+    "date": "2025-11-03",
+    "time": "16:00",
     "reason": "checkup",
     "status": "pending"
   }
 }
 ```
 
+## Features Details
+
+### Intelligent Extraction
+- **Names**: "Kevin leitich, i want..." → extracts "Kevin Leitich"
+- **Doctors**: "i would like to see Wangechi" → extracts "Dr. Wangechi"
+- **Dates**: "3 nov", "tomorrow", "november 4th" → converts to YYYY-MM-DD
+- **Times**: "4pm", "2:30pm", "14:30" → converts to 24-hour HH:MM format
+- **Reasons**: "for checkup", "dentist", "consultation" → extracts reason
+
+### Conversation State
+- Remembers all information across messages using `session_id`
+- Never asks for information already provided
+- Completes booking automatically when all required fields are collected
+
 ## Common Issues
 
 | Problem | Fix |
 |---|---|
-| Ollama not found | Install locally: `curl -fsSL https://ollama.com/install.sh` |
-| JSON parse error | Update Ollama prompt to force JSON output |
+| "Sorry, I couldn't reach the Groq API" | Set `GROQ_API_KEY` in `.env` file or export as environment variable |
+| "Model decommissioned" error | Update `GROQ_MODEL` in `.env` to a current model (e.g., `llama-3.3-70b-versatile`) |
 | CORS error | Fiber CORS middleware is enabled for dev |
 | Token expired | Re-login to regenerate JWT |
+| Bot asking for info already provided | Ensure `session_id` is consistent across requests |
+
+## Available Groq Models
+
+You can configure the model via `GROQ_MODEL` environment variable. Some options:
+- `llama-3.3-70b-versatile` (default, recommended)
+- `llama-3.1-8b-instant` (faster, smaller)
+- `mixtral-8x7b-32768` (alternative)
 
 ## References
-- Ollama Docs
-- Fiber Docs
-- React Docs
-- GORM Docs
+- [Groq API Docs](https://console.groq.com/docs)
+- [Fiber Docs](https://docs.gofiber.io/)
+- [React Docs](https://react.dev/)
+- [GORM Docs](https://gorm.io/)
 

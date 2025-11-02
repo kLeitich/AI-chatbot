@@ -2,52 +2,117 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"strings"
-
 	"github.com/gofiber/fiber/v2"
 )
-
-// Remove duplicate type declarations here. models.go defines structs.
 
 func chatHandler(c *fiber.Ctx) error {
 	var req ChatRequest
 	if err := c.BodyParser(&req); err != nil {
-		fmt.Printf("[DEBUG] Invalid request body: %v\n", err)
 		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
 	}
 
-	userMsg := strings.TrimSpace(req.Message)
-	if userMsg == "" {
-		fmt.Println("[DEBUG] Empty message payload")
-		return c.JSON(fiber.Map{"reply": "Please type a message to continue."})
+	// Use session ID or generate a default one for conversation tracking
+	sessionID := req.SessionID
+	if sessionID == "" {
+		sessionID = "default"
 	}
-	fmt.Printf("\n[DEBUG] Incoming chat: session=%s message=%q\n", req.SessionID, userMsg)
 
-	ap, reply, err := AskForAppointmentFromMessage("", userMsg, req.SessionID)
+	// Get conversation history
+	conv := getConversation(sessionID)
+	
+	ap, reply, err := AskForAppointmentFromMessage("", req.Message, conv)
 	if err != nil {
-		fmt.Printf("[DEBUG] AI error/fallback: %v\n", err)
-		return c.JSON(fiber.Map{"reply": "Sorry, I had trouble processing that. Could you try again?"})
+		log.Printf("[Chat Error] %v", err)
 	}
 
-	if ap.Doctor != "" && ap.Date != "" && ap.Time != "" && ap.PatientName != "" {
-		fmt.Printf("[DEBUG] Booking appointment: %+v\n", ap)
-		if err := db.Create(&ap).Error; err != nil {
-			fmt.Printf("[DEBUG] DB create failed: %v\n", err)
-			return fiber.NewError(fiber.StatusInternalServerError, "failed to save appointment")
+	// Update conversation state with partial information
+	if ap.Doctor != "" || ap.PatientName != "" || ap.Date != "" || ap.Time != "" || ap.Reason != "" {
+		conv.Draft.PatientName = choose(ap.PatientName, conv.Draft.PatientName)
+		conv.Draft.Doctor = choose(ap.Doctor, conv.Draft.Doctor)
+		conv.Draft.Date = choose(ap.Date, conv.Draft.Date)
+		conv.Draft.Time = choose(ap.Time, conv.Draft.Time)
+		conv.Draft.Reason = choose(ap.Reason, conv.Draft.Reason)
+		conv.LastUserMessage = req.Message
+		conv.LastAIMessage = reply
+		setConversation(sessionID, conv)
+	}
+
+	// Check if the current response has information to update the conversation state
+	if strings.TrimSpace(ap.Reason) != "" {
+		conv.Draft.Reason = ap.Reason
+	}
+	if strings.TrimSpace(ap.PatientName) != "" {
+		conv.Draft.PatientName = ap.PatientName
+	}
+	if strings.TrimSpace(ap.Doctor) != "" {
+		conv.Draft.Doctor = ap.Doctor
+	}
+	if strings.TrimSpace(ap.Date) != "" && isValidDate(ap.Date) {
+		conv.Draft.Date = ap.Date
+	}
+	if strings.TrimSpace(ap.Time) != "" {
+		// Normalize time before saving to ensure proper format
+		normalizedTime := normalizeTime(ap.Time)
+		if normalizedTime != "" && isValidTime(normalizedTime) {
+			conv.Draft.Time = normalizedTime
+			ap.Time = normalizedTime // Also update the appointment object
 		}
-		fmt.Println("[DEBUG] Appointment booked and returned to frontend")
-		return c.JSON(ChatResponse{
-			Message:     "Appointment booked successfully.",
-			Reply:       reply,
-			Appointment: &ap,
-		})
+	}
+	setConversation(sessionID, conv)
+
+	// Check if we now have all required fields
+	updatedHasAll := conv.Draft.Doctor != "" && 
+		conv.Draft.PatientName != "" && 
+		isValidDate(conv.Draft.Date) && 
+		isValidTime(conv.Draft.Time)
+
+	// CRITICAL: If we have all required fields, complete booking immediately - don't ask again
+	if updatedHasAll {
+		// Check if reason is missing - ask for it before completing booking
+		finalReason := choose(ap.Reason, conv.Draft.Reason)
+		if strings.TrimSpace(finalReason) == "" {
+			// We have all required fields except reason - ask for it ONLY
+			reasonReply := fmt.Sprintf("Perfect! I have all the details. What is the reason for your appointment with %s on %s at %s?", 
+				conv.Draft.Doctor, conv.Draft.Date, conv.Draft.Time)
+			return c.JSON(fiber.Map{"reply": reasonReply})
+		}
+
+		// We have everything including reason - complete the booking immediately
+		if strings.TrimSpace(finalReason) == "" {
+			finalReason = "general consultation" // Default if still empty
+		}
+		
+		// Normalize time to ensure it's in correct format
+		finalTime := normalizeTime(conv.Draft.Time)
+		
+		finalApp := Appointment{
+			PatientName: conv.Draft.PatientName,
+			Doctor:      conv.Draft.Doctor,
+			Date:        conv.Draft.Date,
+			Time:        finalTime,
+			Reason:      finalReason,
+			Status:      "pending",
+		}
+
+		// Generate confirmation message
+		reply = fmt.Sprintf("Perfect! I've booked your appointment with %s on %s at %s for %s. Thank you, %s!", 
+			finalApp.Doctor, finalApp.Date, finalApp.Time, finalApp.Reason, finalApp.PatientName)
+
+		if err := db.Create(&finalApp).Error; err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "failed to create appointment")
+		}
+		// Clear conversation state after successful booking
+		setConversation(sessionID, ConversationState{})
+		return c.JSON(ChatResponse{Message: reply, Appointment: &finalApp})
 	}
 
-	fmt.Printf("[DEBUG] Fallback reply returned: %s\n", strings.TrimSpace(reply))
+	if strings.TrimSpace(reply) == "" {
+		reply = "Hi! I can help you book an appointment. Which doctor and date work for you?"
+	}
 	return c.JSON(fiber.Map{"reply": strings.TrimSpace(reply)})
 }
-
-// -------------------- CRUD Handlers --------------------
 
 func listAppointments(c *fiber.Ctx) error {
 	var apps []Appointment
@@ -81,9 +146,8 @@ func updateAppointment(c *fiber.Ctx) error {
 	id := c.Params("id")
 	var ap Appointment
 	if err := db.First(&ap, id).Error; err != nil {
-		return fiber.NewError(fiber.StatusNotFound, "appointment not found")
+		return fiber.NewError(fiber.StatusNotFound, "not found")
 	}
-
 	var in Appointment
 	if err := c.BodyParser(&in); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
@@ -114,12 +178,10 @@ func updateAppointment(c *fiber.Ctx) error {
 func deleteAppointment(c *fiber.Ctx) error {
 	id := c.Params("id")
 	if err := db.Delete(&Appointment{}, id).Error; err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "failed to delete appointment")
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to delete")
 	}
 	return c.SendStatus(fiber.StatusNoContent)
 }
-
-// -------------------- Helpers --------------------
 
 func choose(a, b string) string {
 	if strings.TrimSpace(a) != "" {

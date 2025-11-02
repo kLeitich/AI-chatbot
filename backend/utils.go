@@ -80,10 +80,14 @@ func tryLocalParse(message string) (Appointment, bool) {
 	if m := timePhraseRe.FindStringSubmatch(msg); len(m) > 0 {
 		hour, _ := strconv.Atoi(m[1])
 		min := 0
-		if m[2] != "" {
+		if len(m) > 2 && m[2] != "" {
 			min, _ = strconv.Atoi(m[2])
 		}
-		ampm := strings.ToLower(m[3])
+		ampm := ""
+		if len(m) > 3 {
+			ampm = strings.ToLower(m[3])
+		}
+		// Handle 12-hour format
 		if ampm == "pm" && hour < 12 {
 			hour += 12
 		}
@@ -92,6 +96,22 @@ func tryLocalParse(message string) (Appointment, bool) {
 		}
 		if hour >= 0 && hour <= 23 {
 			hhmm = formatTwo(hour) + ":" + formatTwo(min)
+		}
+	} else {
+		// Fallback: check for simple patterns like "5pm", "3am"
+		simpleTimeRe := regexp.MustCompile(`(?i)\b(\d{1,2})\s*(am|pm)\b`)
+		if m := simpleTimeRe.FindStringSubmatch(msg); len(m) > 2 {
+			hour, _ := strconv.Atoi(m[1])
+			ampm := strings.ToLower(m[2])
+			if ampm == "pm" && hour < 12 {
+				hour += 12
+			}
+			if ampm == "am" && hour == 12 {
+				hour = 0
+			}
+			if hour >= 0 && hour <= 23 {
+				hhmm = formatTwo(hour) + ":00"
+			}
 		}
 	}
 
@@ -131,7 +151,25 @@ func tryLocalParse(message string) (Appointment, bool) {
 		patient = strings.TrimSpace(m[1])
 	}
 
-	ap := Appointment{PatientName: patient, Doctor: doctor, Date: dateStr, Time: hhmm, Status: "pending"}
+	// Reason extraction (from patterns like "for Dentist", "for checkup", or standalone medical terms)
+	reason := ""
+	reasonPatterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\b(?:for|because of|reason is|need)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)\b`),
+		regexp.MustCompile(`(?i)\b(dentist|dental|checkup|consultation|examination|exam|headache|pain|injury|surgery|treatment|therapy|routine|annual|physical|screening)\b`),
+	}
+	for _, pattern := range reasonPatterns {
+		if m := pattern.FindStringSubmatch(msg); len(m) > 1 {
+			reason = strings.TrimSpace(m[1])
+			break
+		}
+	}
+
+	// Normalize the time to ensure it's in HH:MM format
+	if hhmm != "" {
+		hhmm = normalizeTime(hhmm)
+	}
+	
+	ap := Appointment{PatientName: patient, Doctor: doctor, Date: dateStr, Time: hhmm, Reason: reason, Status: "pending"}
 	if ap.Date != "" && isValidDate(ap.Date) && ap.Time != "" && isValidTime(ap.Time) {
 		return ap, true
 	}
@@ -161,4 +199,56 @@ func formatTwo(n int) string {
 		return "0" + strconv.Itoa(n)
 	}
 	return strconv.Itoa(n)
+}
+
+// normalizeTime converts various time formats to HH:MM (24-hour)
+// Handles: "4pm" -> "16:00", "11am" -> "11:00", "2:30pm" -> "14:30", "14:30" -> "14:30"
+func normalizeTime(timeStr string) string {
+	if timeStr == "" {
+		return ""
+	}
+	
+	timeStr = strings.TrimSpace(strings.ToLower(timeStr))
+	
+	// Already in HH:MM format?
+	if timeRegex.MatchString(timeStr) {
+		return timeStr
+	}
+	
+	// Try to extract time from patterns like "4pm", "2:30pm", "11am"
+	// Pattern 1: Simple "4pm" or "11am"
+	simpleRe := regexp.MustCompile(`^(\d{1,2})\s*(am|pm)$`)
+	if m := simpleRe.FindStringSubmatch(timeStr); len(m) == 3 {
+		hour, _ := strconv.Atoi(m[1])
+		ampm := m[2]
+		if ampm == "pm" && hour < 12 {
+			hour += 12
+		}
+		if ampm == "am" && hour == 12 {
+			hour = 0
+		}
+		if hour >= 0 && hour <= 23 {
+			return formatTwo(hour) + ":00"
+		}
+	}
+	
+	// Pattern 2: "2:30pm" or "11:45am"
+	withMinRe := regexp.MustCompile(`^(\d{1,2}):(\d{2})\s*(am|pm)$`)
+	if m := withMinRe.FindStringSubmatch(timeStr); len(m) == 4 {
+		hour, _ := strconv.Atoi(m[1])
+		min, _ := strconv.Atoi(m[2])
+		ampm := m[3]
+		if ampm == "pm" && hour < 12 {
+			hour += 12
+		}
+		if ampm == "am" && hour == 12 {
+			hour = 0
+		}
+		if hour >= 0 && hour <= 23 && min >= 0 && min < 60 {
+			return formatTwo(hour) + ":" + formatTwo(min)
+		}
+	}
+	
+	// If no match, return original (might already be in correct format)
+	return timeStr
 }
