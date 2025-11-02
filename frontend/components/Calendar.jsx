@@ -7,7 +7,7 @@ function startOfWeek(date) { const d = new Date(date); const day = d.getDay(); d
 function addDays(date, n) { const d = new Date(date); d.setDate(d.getDate() + n); return d }
 function addMonths(date, n) { const d = new Date(date); d.setMonth(d.getMonth() + n); return d }
 function addWeeks(date, n) { return addDays(date, n * 7) }
-function ymd(d) { return d.toISOString().slice(0,10) }
+function ymd(d) { const year=d.getFullYear(); const month=String(d.getMonth()+1).padStart(2,'0'); const day=String(d.getDate()).padStart(2,'0'); return `${year}-${month}-${day}` }
 function monthLabel(date) { return date.toLocaleString(undefined, { month: 'long', year: 'numeric' }) }
 function weekLabel(date) { const s=startOfWeek(date); const e=addDays(s,6); const fmt=(x)=>x.toLocaleDateString(undefined,{month:'short',day:'numeric'}); return `${fmt(s)} - ${fmt(e)}` }
 
