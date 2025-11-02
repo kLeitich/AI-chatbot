@@ -44,10 +44,12 @@ cp frontend/env.example frontend/.env
 - `SQLITE_PATH` (default: appointments.db)
 - `DEFAULT_ADMIN_EMAIL` (default: admin@example.com)
 - `DEFAULT_ADMIN_PASSWORD` (default: admin123)
-- `FRONTEND_URL` (default: https://ai-chatbot-gamma-blue-98.vercel.app) - **Required for CORS in production**
+- `FRONTEND_URL` (default: http://localhost:3000 for local dev) - **Required in production**: Set to your Vercel URL (e.g., https://ai-chatbot-gamma-blue-98.vercel.app)
 
 **Frontend (.env)**: 
-- `NEXT_PUBLIC_API_URL` (default: http://localhost:8080) - Set to your backend URL in production
+- `NEXT_PUBLIC_API_URL` (default: http://localhost:8080 for local dev) - **Required in production**: Set to your Render backend URL (e.g., https://ai-chatbot-1vkx.onrender.com)
+
+**Note**: Both services work out of the box for local development. No environment variables are required for local testing. For production deployment, set the environment variables as described in the Production Deployment section below.
 
 ## Installation
 

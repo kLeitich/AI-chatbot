@@ -54,12 +54,20 @@ func main() {
 
 	app := fiber.New()
 
-	// ✅ CORS Configuration (dynamic)
-	frontend := getEnv("FRONTEND_URL", "https://ai-chatbot-gamma-blue-98.vercel.app")
-	log.Printf("[config] Allowing frontend origin: %s", frontend)
+	// ✅ CORS Configuration (works for both local and production)
+	// Default to localhost for local development, use env var for production
+	frontendURL := getEnv("FRONTEND_URL", "http://localhost:3000")
+	
+	// Always allow localhost for local development, add production URL if different
+	allowedOrigins := "http://localhost:3000"
+	if frontendURL != "http://localhost:3000" {
+		allowedOrigins = frontendURL + ", http://localhost:3000"
+	}
+	
+	log.Printf("[config] Allowing frontend origins: %s", allowedOrigins)
 
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: frontend + ", http://localhost:3000",
+		AllowOrigins: allowedOrigins,
 		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
 		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
 		AllowCredentials: true,
