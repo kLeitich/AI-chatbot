@@ -44,8 +44,10 @@ cp frontend/env.example frontend/.env
 - `SQLITE_PATH` (default: appointments.db)
 - `DEFAULT_ADMIN_EMAIL` (default: admin@example.com)
 - `DEFAULT_ADMIN_PASSWORD` (default: admin123)
+- `FRONTEND_URL` (default: https://ai-chatbot-gamma-blue-98.vercel.app) - **Required for CORS in production**
 
-**Frontend (.env)**: `VITE_API_URL` (default: http://localhost:8080)
+**Frontend (.env)**: 
+- `NEXT_PUBLIC_API_URL` (default: http://localhost:8080) - Set to your backend URL in production
 
 ## Installation
 
@@ -85,6 +87,27 @@ Access:
 - Backend → http://localhost:8080
 
 **Note**: For Docker deployment, ensure `GROQ_API_KEY` is set in the backend service environment variables.
+
+## Production Deployment
+
+### Deploying to Render (Backend)
+
+1. Connect your GitHub repository to Render
+2. Set the following environment variables in Render dashboard:
+   - `PORT=8080` (Render will override this automatically)
+   - `GROQ_API_KEY` - Your Groq API key
+   - `FRONTEND_URL` - Your Vercel frontend URL (e.g., `https://ai-chatbot-gamma-blue-98.vercel.app`)
+   - `JWT_SECRET` - A secure secret for JWT tokens
+   - `SQLITE_PATH` - Path to database file (default: `appointments.db`)
+
+### Deploying to Vercel (Frontend)
+
+1. Connect your GitHub repository to Vercel
+2. Set the following environment variable in Vercel dashboard:
+   - `NEXT_PUBLIC_API_URL` - Your Render backend URL (e.g., `https://ai-chatbot-1vkx.onrender.com`)
+3. Vercel will automatically detect Next.js and build/deploy
+
+**Important**: Make sure the `FRONTEND_URL` in your backend matches your Vercel URL exactly, otherwise you'll get CORS errors.
 
 ## Default Admin
 
