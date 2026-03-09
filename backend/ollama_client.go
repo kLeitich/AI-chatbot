@@ -125,6 +125,76 @@ ABSOLUTE RULE: If previous context has some fields, DO NOT ask for them again - 
 Check the "You ALREADY have" section - NEVER ask for anything listed there.
 `
 
+	// Handle very short, direct answers to the last assistant question deterministically
+	// to avoid the model "changing its mind" about fields we already know.
+	trimmed := strings.TrimSpace(userMessage)
+	words := strings.Fields(trimmed)
+	lastAI := strings.ToLower(conv.LastAIMessage)
+
+	if len(words) > 0 && len(words) <= 4 && lastAI != "" {
+		// If we just asked for the patient's name and we don't have one yet,
+		// treat this short reply as the patient name.
+		if conv.Draft.PatientName == "" &&
+			(strings.Contains(lastAI, "your name") ||
+				strings.Contains(lastAI, "patient name") ||
+				strings.Contains(lastAI, "what is your name")) {
+
+			cleanName := strings.Trim(trimmed, " .,!?:;")
+			if cleanName != "" {
+				app := Appointment{
+					PatientName: cleanName,
+					Status:      "pending",
+				}
+				reply, err := AskConversationalReply(model, userMessage, conv)
+				if err != nil {
+					return Appointment{}, "I'm here to help! Could you please rephrase that?", err
+				}
+				return app, reply, nil
+			}
+		}
+
+		// If we just asked which doctor they want and we don't have a doctor yet,
+		// treat this short reply as the doctor's name.
+		if conv.Draft.Doctor == "" &&
+			(strings.Contains(lastAI, "which doctor") ||
+				strings.Contains(lastAI, "what doctor") ||
+				strings.Contains(lastAI, "doctor would you like to see")) {
+
+			clean := strings.Trim(trimmed, " .,!?:;")
+			if clean != "" {
+				lower := strings.ToLower(clean)
+				if strings.HasPrefix(lower, "dr ") || strings.HasPrefix(lower, "dr.") {
+					// Remove the dr/dr. prefix and normalize the remaining name
+					without := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(lower, "dr."), "dr"))
+					if without != "" {
+						without = strings.ToUpper(without[:1]) + without[1:]
+						app := Appointment{
+							Doctor: "Dr. " + without,
+							Status: "pending",
+						}
+						reply, err := AskConversationalReply(model, userMessage, conv)
+						if err != nil {
+							return Appointment{}, "I'm here to help! Could you please rephrase that?", err
+						}
+						return app, reply, nil
+					}
+				} else {
+					// Assume it's a bare last name like "Kevin"
+					capitalized := strings.ToUpper(clean[:1]) + strings.ToLower(clean[1:])
+					app := Appointment{
+						Doctor: "Dr. " + capitalized,
+						Status: "pending",
+					}
+					reply, err := AskConversationalReply(model, userMessage, conv)
+					if err != nil {
+						return Appointment{}, "I'm here to help! Could you please rephrase that?", err
+					}
+					return app, reply, nil
+				}
+			}
+		}
+	}
+
 	// Build context from conversation history
 	contextStr := ""
 	if conv.Draft.Doctor != "" {

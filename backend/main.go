@@ -47,10 +47,10 @@ func main() {
 
 	port := getEnv("PORT", "8080")
 	dbPath := getEnv("SQLITE_PATH", "appointments.db")
-	initDatabase(dbPath)
+	defaultTenantID := initDatabase(dbPath)
 
 	// Ensure default admin exists
-	_ = ensureDefaultAdmin(getEnv("DEFAULT_ADMIN_EMAIL", "admin@example.com"), getEnv("DEFAULT_ADMIN_PASSWORD", "admin123"))
+	_ = ensureDefaultAdmin(defaultTenantID, getEnv("DEFAULT_ADMIN_EMAIL", "admin@example.com"), getEnv("DEFAULT_ADMIN_PASSWORD", "admin123"))
 
 	app := fiber.New()
 
@@ -77,11 +77,14 @@ func main() {
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok", "time": time.Now()})
 	})
-	app.Post("/chat", chatHandler)
-	app.Post("/register", registerHandler)
-	app.Post("/login", loginHandler)
+	// Tenant-scoped API under /t/:tenant/...
+	tenant := app.Group("/t/:tenant")
 
-	admin := app.Group("/admin", jwtMiddleware)
+	tenant.Post("/chat", chatHandler)
+	tenant.Post("/register", registerHandler)
+	tenant.Post("/login", loginHandler)
+
+	admin := tenant.Group("/admin", jwtMiddleware)
 	admin.Get("/appointments", listAppointments)
 	admin.Post("/appointments", createAppointment)
 	admin.Put("/appointments/:id", updateAppointment)

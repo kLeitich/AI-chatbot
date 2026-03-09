@@ -23,5 +23,19 @@ func jwtMiddleware(c *fiber.Ctx) error {
 	if err != nil || !tok.Valid {
 		return fiber.NewError(fiber.StatusUnauthorized, "invalid token")
 	}
+
+	claims, ok := tok.Claims.(jwt.MapClaims)
+	if !ok {
+		return fiber.NewError(fiber.StatusUnauthorized, "invalid token claims")
+	}
+
+	// Extract user and tenant IDs from token for downstream handlers
+	if sub, ok := claims["sub"].(float64); ok {
+		c.Locals("user_id", uint(sub))
+	}
+	if tid, ok := claims["tenantId"].(float64); ok {
+		c.Locals("tenant_id", uint(tid))
+	}
+
 	return c.Next()
 }

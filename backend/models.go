@@ -4,16 +4,28 @@ import (
 	"time"
 )
 
+// Tenant represents a logical clinic / organization in a multitenant setup.
+// All users, appointments and chat sessions are scoped to a tenant.
+type Tenant struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Slug      string    `gorm:"uniqueIndex;size:100;not null" json:"slug"` // e.g. "default", "clinic-a"
+	Name      string    `gorm:"size:255;not null" json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type User struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
-	Email     string    `gorm:"uniqueIndex;size:255;not null" json:"email"`
+	Email     string    `gorm:"uniqueIndex:idx_user_email_tenant;size:255;not null" json:"email"`
 	Password  string    `json:"-"`
+	TenantID  uint      `gorm:"index;not null" json:"tenant_id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type Appointment struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
+	TenantID    uint      `gorm:"index;not null" json:"tenant_id"`
 	PatientName string    `gorm:"size:255;not null" json:"patient_name"`
 	Doctor      string    `gorm:"size:255;not null" json:"doctor"`
 	Date        string    `gorm:"size:10;not null" json:"date"`

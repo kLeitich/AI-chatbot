@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import api from '../lib/api'
 
-export default function AdminLogin() {
+export default function AdminLogin({ tenant = 'default' }) {
   const [email, setEmail] = useState('admin@example.com')
   const [password, setPassword] = useState('admin123')
   const [error, setError] = useState('')
@@ -15,9 +15,9 @@ export default function AdminLogin() {
     setLoading(true)
     setError('')
     try {
-      const res = await api.post('/login', { email, password })
+      const res = await api.post(`/t/${tenant}/login`, { email, password })
       localStorage.setItem('token', res.data?.token || '')
-      router.replace('/admin/dashboard')
+      router.replace(`/t/${tenant}/admin/dashboard`)
     } catch (e) {
       setError('Invalid credentials')
     } finally {

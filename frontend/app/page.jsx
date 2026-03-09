@@ -1,5 +1,6 @@
-import Chatbot from '../components/Chatbot'
+import { redirect } from 'next/navigation'
 
 export default function Page() {
-  return <Chatbot />
+  // Redirect root to the default tenant chatbot
+  redirect('/t/default')
 }
