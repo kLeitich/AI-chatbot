@@ -27,6 +27,8 @@ func initDatabase(dbPath string) uint {
 	}
 
 	defaultTenantID := ensureDefaultTenant()
+	// Backfill any legacy rows (from before multitenancy) to the default tenant.
+	backfillTenantIDs(defaultTenantID)
 	seedSampleData(defaultTenantID)
 	return defaultTenantID
 }
@@ -46,6 +48,24 @@ func ensureDefaultTenant() uint {
 		log.Fatalf("failed to create default tenant: %v", err)
 	}
 	return t.ID
+}
+
+// backfillTenantIDs assigns the default tenant to any existing users/appointments
+// that don't yet have a tenant_id (from pre-multitenant deployments).
+func backfillTenantIDs(defaultTenantID uint) {
+	// Users
+	if err := db.Model(&User{}).
+		Where("tenant_id IS NULL OR tenant_id = 0").
+		Update("tenant_id", defaultTenantID).Error; err != nil {
+		log.Printf("failed to backfill user tenant IDs: %v", err)
+	}
+
+	// Appointments
+	if err := db.Model(&Appointment{}).
+		Where("tenant_id IS NULL OR tenant_id = 0").
+		Update("tenant_id", defaultTenantID).Error; err != nil {
+		log.Printf("failed to backfill appointment tenant IDs: %v", err)
+	}
 }
 
 func seedSampleData(defaultTenantID uint) {
