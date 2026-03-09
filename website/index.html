@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Doctor Appointment Platform</title>
+    <meta
+      name="description"
+      content="AI-powered, multitenant doctor appointment chatbot with admin dashboards and WhatsApp integration for clinics and hospitals."
+    />
+    <style>
+      :root {
+        --bg: #050816;
+        --bg-alt: #0b1020;
+        --accent: #3b82f6;
+        --accent-soft: rgba(59, 130, 246, 0.15);
+        --accent-2: #22c55e;
+        --text: #e5e7eb;
+        --muted: #9ca3af;
+        --border: rgba(148, 163, 184, 0.35);
+        --card-bg: rgba(15, 23, 42, 0.8);
+        --radius-lg: 18px;
+        --radius-full: 999px;
+        --shadow-soft: 0 24px 70px rgba(15, 23, 42, 0.70);
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+          "Segoe UI", sans-serif;
+        background: radial-gradient(circle at top left, #1e293b 0, #020617 50%);
+        color: var(--text);
+        min-height: 100vh;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .page {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 24px 20px 56px;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 40px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .brand-logo {
+        width: 36px;
+        height: 36px;
+        border-radius: 18px;
+        background: conic-gradient(from 210deg, #22c55e, #3b82f6, #22c55e);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 12px 40px rgba(59, 130, 246, 0.7);
+      }
+
+      .brand-logo span {
+        font-size: 18px;
+        font-weight: 700;
+        color: white;
+      }
+
+      .brand-text-title {
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+
+      .brand-text-sub {
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      nav {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      nav a {
+        color: inherit;
+        text-decoration: none;
+        padding: 4px 0;
+      }
+
+      nav a:hover {
+        color: var(--text);
+      }
+
+      .nav-cta {
+        padding: 7px 14px;
+        border-radius: var(--radius-full);
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        color: var(--text);
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+        gap: 28px;
+        align-items: center;
+      }
+
+      @media (max-width: 880px) {
+        main {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        header {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+        nav {
+          width: 100%;
+          justify-content: space-between;
+        }
+      }
+
+      .hero-eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 3px 10px;
+        border-radius: var(--radius-full);
+        background: rgba(15, 23, 42, 0.8);
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        font-size: 11px;
+        color: var(--muted);
+        margin-bottom: 16px;
+      }
+
+      .hero-eyebrow span.badge {
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(34, 197, 94, 0.18);
+        color: #bbf7d0;
+      }
+
+      .hero-title {
+        font-size: clamp(30px, 4vw, 38px);
+        font-weight: 650;
+        line-height: 1.08;
+        margin-bottom: 12px;
+      }
+
+      .hero-title span {
+        background: linear-gradient(120deg, #22c55e, #3b82f6);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+
+      .hero-lede {
+        font-size: 14px;
+        color: var(--muted);
+        max-width: 420px;
+        margin-bottom: 18px;
+      }
+
+      .hero-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        margin-bottom: 22px;
+      }
+
+      .pill {
+        font-size: 11px;
+        padding: 6px 11px;
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.45);
+        color: var(--muted);
+      }
+
+      .pill strong {
+        color: var(--text);
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 26px;
+      }
+
+      .btn-primary {
+        padding: 10px 18px;
+        border-radius: 999px;
+        border: none;
+        background: linear-gradient(135deg, #3b82f6, #22c55e);
+        color: white;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        box-shadow: 0 18px 40px rgba(37, 99, 235, 0.75);
+      }
+
+      .btn-ghost {
+        padding: 9px 16px;
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.6);
+        background: transparent;
+        color: var(--text);
+        font-size: 13px;
+        cursor: pointer;
+      }
+
+      .hero-footnote {
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .hero-footnote span {
+        color: #a5b4fc;
+      }
+
+      .layout-right {
+        position: relative;
+      }
+
+      .card {
+        border-radius: var(--radius-lg);
+        background: radial-gradient(circle at top left, #1f2937 0, #020617 60%);
+        box-shadow: var(--shadow-soft);
+        border: 1px solid var(--border);
+        padding: 18px 18px 16px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .card::before {
+        content: "";
+        position: absolute;
+        inset: -40%;
+        background:
+          radial-gradient(circle at 10% 0, rgba(59, 130, 246, 0.18), transparent 58%),
+          radial-gradient(circle at 90% 100%, rgba(34, 197, 94, 0.18), transparent 55%);
+        opacity: 0.9;
+        pointer-events: none;
+      }
+
+      .card-inner {
+        position: relative;
+        z-index: 1;
+      }
+
+      .card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 14px;
+      }
+
+      .card-header-left {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: #22c55e;
+        box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.25);
+      }
+
+      .card-badge {
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .card-pill {
+        font-size: 11px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.85);
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .card-pill span.dot-small {
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: #22c55e;
+      }
+
+      .chat-window {
+        background: rgba(15, 23, 42, 0.9);
+        border-radius: 14px;
+        padding: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        margin-bottom: 12px;
+      }
+
+      .chat-bubbles {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        font-size: 11px;
+      }
+
+      .bubble-row {
+        display: flex;
+      }
+
+      .bubble-row.user {
+        justify-content: flex-end;
+      }
+
+      .bubble {
+        max-width: 80%;
+        padding: 7px 9px;
+        border-radius: 10px;
+      }
+
+      .bubble.ai {
+        background: rgba(15, 23, 42, 0.95);
+        border: 1px solid rgba(148, 163, 184, 0.4);
+      }
+
+      .bubble.user {
+        background: linear-gradient(135deg, #3b82f6, #22c55e);
+        color: white;
+      }
+
+      .bubble-meta {
+        margin-top: 4px;
+        font-size: 10px;
+        color: var(--muted);
+      }
+
+      .chat-input {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .chat-input input {
+        flex: 1;
+        background: rgba(15, 23, 42, 0.9);
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.5);
+        padding: 7px 12px;
+        font-size: 11px;
+        color: var(--text);
+        outline: none;
+      }
+
+      .chat-input button {
+        border-radius: 999px;
+        border: none;
+        background: var(--accent);
+        color: white;
+        font-size: 11px;
+        padding: 7px 11px;
+        cursor: pointer;
+      }
+
+      .section-grid {
+        margin-top: 30px;
+        display: grid;
+        grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+        gap: 18px;
+      }
+
+      @media (max-width: 880px) {
+        .section-grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+
+      .section-card {
+        border-radius: 16px;
+        background: rgba(15, 23, 42, 0.9);
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        padding: 16px 16px 14px;
+      }
+
+      .section-title {
+        font-size: 14px;
+        font-weight: 550;
+        margin-bottom: 6px;
+      }
+
+      .section-body {
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 10px;
+      }
+
+      .tag-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        font-size: 10px;
+      }
+
+      .tag {
+        padding: 4px 9px;
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.5);
+        background: rgba(15, 23, 42, 0.9);
+      }
+
+      .stack-line {
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 8px;
+      }
+
+      .stack-line strong {
+        color: var(--text);
+      }
+
+      footer {
+        margin-top: 32px;
+        font-size: 11px;
+        color: var(--muted);
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        border-top: 1px solid rgba(148, 163, 184, 0.3);
+        padding-top: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header>
+        <div class="brand">
+          <div class="brand-logo">
+            <span>MD</span>
+          </div>
+          <div>
+            <div class="brand-text-title">MedDesk AI</div>
+            <div class="brand-text-sub">AI doctor appointments at scale</div>
+          </div>
+        </div>
+        <nav>
+          <a href="#features">Features</a>
+          <a href="#clinics">For Clinics</a>
+          <a href="#whatsapp">WhatsApp</a>
+          <span class="nav-cta">Self‑hosted · Multitenant</span>
+        </nav>
+      </header>
+
+      <main>
+        <section>
+          <div class="hero-eyebrow">
+            <span class="badge">New · Multitenant &amp; WhatsApp‑ready</span>
+            AI assistant that actually books appointments.
+          </div>
+          <h1 class="hero-title">
+            AI‑powered doctor booking for
+            <span>every clinic in your network.</span>
+          </h1>
+          <p class="hero-lede">
+            Turn chat into confirmed appointments. One shared platform,
+            isolated data per clinic, with admin dashboards, calendar views and
+            WhatsApp integration.
+          </p>
+          <div class="hero-meta">
+            <div class="pill">
+              <strong>Multitenant</strong> — many clinics, one stack
+            </div>
+            <div class="pill">
+              <strong>Groq‑powered</strong> extraction of doctor, date, time,
+              patient &amp; reason
+            </div>
+          </div>
+          <div class="hero-actions">
+            <button class="btn-primary">
+              View technical docs (README.md)
+            </button>
+            <button class="btn-ghost">
+              Explore admin dashboard in /frontend
+            </button>
+          </div>
+          <p class="hero-footnote">
+            Backed by <span>Go + Fiber</span>, <span>Next.js</span>,
+            <span>SQLite</span> and the <span>Groq API</span>.
+          </p>
+        </section>
+
+        <section class="layout-right">
+          <div class="card">
+            <div class="card-inner">
+              <div class="card-header">
+                <div class="card-header-left">
+                  <div class="dot"></div>
+                  <div class="card-badge">Live chatbot · tenant: default</div>
+                </div>
+                <div class="card-pill">
+                  <span class="dot-small"></span>
+                  <span>Auto‑creates appointments</span>
+                </div>
+              </div>
+              <div class="chat-window">
+                <div class="chat-bubbles">
+                  <div class="bubble-row ai">
+                    <div class="bubble ai">
+                      Hi! I can help you book a doctor appointment. Who would you
+                      like to see and when?
+                    </div>
+                  </div>
+                  <div class="bubble-row user">
+                    <div class="bubble user">
+                      I’d like to see Dr. Kim tomorrow at 4pm for a checkup.
+                    </div>
+                  </div>
+                  <div class="bubble-row ai">
+                    <div class="bubble ai">
+                      Perfect! I’ve booked your appointment with Dr. Kim on
+                      2025‑11‑03 at 16:00 for checkup. Thank you, Kevin!
+                      <div class="bubble-meta">
+                        → Saved into the default clinic’s calendar
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="chat-input">
+                  <input
+                    type="text"
+                    placeholder="Try: Book me with Dr. Mercy next Tuesday at 11am"
+                  />
+                  <button>Send</button>
+                </div>
+              </div>
+
+              <div class="section-grid" id="features">
+                <div class="section-card">
+                  <div class="section-title">Built for dev teams</div>
+                  <div class="section-body">
+                    A clean Go backend exposes `/t/{tenant}/chat` and admin
+                    APIs, while a Next.js frontend handles chatbot UX and admin
+                    dashboards (table + calendar views).
+                  </div>
+                  <div class="tag-row">
+                    <span class="tag">Go · Fiber</span>
+                    <span class="tag">Next.js App Router</span>
+                    <span class="tag">Groq API</span>
+                    <span class="tag">JWT auth</span>
+                    <span class="tag">SQLite</span>
+                  </div>
+                  <div class="stack-line">
+                    <strong>Local dev:</strong> `backend` on :8080, `frontend`
+                    on :3000, plus this static marketing site in `website/`.
+                  </div>
+                </div>
+
+                <div class="section-card" id="whatsapp">
+                  <div class="section-title">WhatsApp‑ready</div>
+                  <div class="section-body">
+                    Plug in Meta’s WhatsApp Cloud API or Twilio. Route your
+                    webhook into `/t/{tenant}/chat`, and the AI will manage
+                    multi‑turn conversations, create appointments and keep
+                    context per phone number.
+                  </div>
+                  <div class="tag-row">
+                    <span class="tag">Webhook → Go handler</span>
+                    <span class="tag">Session = phone number</span>
+                    <span class="tag">Tenant‑aware URLs</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="section-card" id="clinics" style="margin-top: 12px">
+                <div class="section-title">For clinic groups &amp hospitals</div>
+                <div class="section-body">
+                  One deployment, many clinics. Each tenant has its own admins,
+                  appointments and calendar, while your infra and codebase stay
+                  shared. Ideal for healthcare groups, white‑label partners and
+                  SaaS offerings.
+                </div>
+                <div class="tag-row">
+                  <span class="tag">Isolated data per tenant</span>
+                  <span class="tag">Role: admin</span>
+                  <span class="tag">Calendar &amp; table views</span>
+                  <span class="tag">Docker‑ready</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <span>MedDesk AI · Example project</span>
+        <span>Explore the code in `backend/` and `frontend/` folders.</span>
+      </footer>
+    </div>
+  </body>
+</html>
+

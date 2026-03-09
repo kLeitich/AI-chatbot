@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -13,14 +14,28 @@ func chatHandler(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
 	}
 
-	// Use session ID or generate a default one for conversation tracking
+	// Resolve tenant from URL for conversation + appointment scoping
+	tenantSlug := c.Params("tenant")
+	if strings.TrimSpace(tenantSlug) == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "missing tenant")
+	}
+
+	var tenant Tenant
+	if err := db.Where("slug = ?", tenantSlug).First(&tenant).Error; err != nil {
+		return fiber.NewError(fiber.StatusNotFound, "tenant not found")
+	}
+
+	// Use session ID or generate a default one for conversation tracking,
+	// but namespace by tenant so sessions are isolated per tenant.
 	sessionID := req.SessionID
 	if sessionID == "" {
 		sessionID = "default"
 	}
 
+	convKey := fmt.Sprintf("%s:%s", tenantSlug, sessionID)
+
 	// Get conversation history
-	conv := getConversation(sessionID)
+	conv := getConversation(convKey)
 	
 	ap, reply, err := AskForAppointmentFromMessage("", req.Message, conv)
 	if err != nil {
@@ -36,7 +51,7 @@ func chatHandler(c *fiber.Ctx) error {
 		conv.Draft.Reason = choose(ap.Reason, conv.Draft.Reason)
 		conv.LastUserMessage = req.Message
 		conv.LastAIMessage = reply
-		setConversation(sessionID, conv)
+		setConversation(convKey, conv)
 	}
 
 	// Check if the current response has information to update the conversation state
@@ -60,7 +75,7 @@ func chatHandler(c *fiber.Ctx) error {
 			ap.Time = normalizedTime // Also update the appointment object
 		}
 	}
-	setConversation(sessionID, conv)
+		setConversation(convKey, conv)
 
 	// Check if we now have all required fields
 	updatedHasAll := conv.Draft.Doctor != "" && 
@@ -100,11 +115,12 @@ func chatHandler(c *fiber.Ctx) error {
 		reply = fmt.Sprintf("Perfect! I've booked your appointment with %s on %s at %s for %s. Thank you, %s!", 
 			finalApp.Doctor, finalApp.Date, finalApp.Time, finalApp.Reason, finalApp.PatientName)
 
+		finalApp.TenantID = tenant.ID
 		if err := db.Create(&finalApp).Error; err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "failed to create appointment")
 		}
 		// Clear conversation state after successful booking
-		setConversation(sessionID, ConversationState{})
+		setConversation(convKey, ConversationState{})
 		return c.JSON(ChatResponse{Message: reply, Appointment: &finalApp})
 	}
 
@@ -115,14 +131,24 @@ func chatHandler(c *fiber.Ctx) error {
 }
 
 func listAppointments(c *fiber.Ctx) error {
+	tenantID, ok := c.Locals("tenant_id").(uint)
+	if !ok || tenantID == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "tenant not found in token")
+	}
+
 	var apps []Appointment
-	if err := db.Order("created_at DESC").Find(&apps).Error; err != nil {
+	if err := db.Where("tenant_id = ?", tenantID).Order("created_at DESC").Find(&apps).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to list appointments")
 	}
 	return c.JSON(apps)
 }
 
 func createAppointment(c *fiber.Ctx) error {
+	tenantID, ok := c.Locals("tenant_id").(uint)
+	if !ok || tenantID == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "tenant not found in token")
+	}
+
 	var in Appointment
 	if err := c.BodyParser(&in); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
@@ -133,6 +159,7 @@ func createAppointment(c *fiber.Ctx) error {
 	if in.Status == "" {
 		in.Status = "pending"
 	}
+	in.TenantID = tenantID
 	if in.PatientName == "" || in.Doctor == "" || !isValidDate(in.Date) || !isValidTime(in.Time) {
 		return fiber.NewError(fiber.StatusBadRequest, "patient, doctor, valid date and time required")
 	}
@@ -143,9 +170,14 @@ func createAppointment(c *fiber.Ctx) error {
 }
 
 func updateAppointment(c *fiber.Ctx) error {
+	tenantID, ok := c.Locals("tenant_id").(uint)
+	if !ok || tenantID == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "tenant not found in token")
+	}
+
 	id := c.Params("id")
 	var ap Appointment
-	if err := db.First(&ap, id).Error; err != nil {
+	if err := db.Where("id = ? AND tenant_id = ?", id, tenantID).First(&ap).Error; err != nil {
 		return fiber.NewError(fiber.StatusNotFound, "not found")
 	}
 	var in Appointment
@@ -176,8 +208,13 @@ func updateAppointment(c *fiber.Ctx) error {
 }
 
 func deleteAppointment(c *fiber.Ctx) error {
+	tenantID, ok := c.Locals("tenant_id").(uint)
+	if !ok || tenantID == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "tenant not found in token")
+	}
+
 	id := c.Params("id")
-	if err := db.Delete(&Appointment{}, id).Error; err != nil {
+	if err := db.Where("id = ? AND tenant_id = ?", id, tenantID).Delete(&Appointment{}).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to delete")
 	}
 	return c.SendStatus(fiber.StatusNoContent)

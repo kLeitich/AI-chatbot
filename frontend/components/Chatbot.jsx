@@ -18,7 +18,7 @@ function Toast({ text, onClose }) {
   )
 }
 
-export default function Chatbot() {
+export default function Chatbot({ tenant = 'default' }) {
   const [messages, setMessages] = useState([{ role: 'ai', text: 'Hi! I can book a doctor appointment. Tell me details.' }])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -46,7 +46,7 @@ export default function Chatbot() {
     try {
       const payload = { message: userText }
       if (sessionId) payload.session_id = sessionId
-      const res = await api.post('/chat', payload)
+      const res = await api.post(`/t/${tenant}/chat`, payload)
       const { message, reply, appointment } = res.data || {}
       const aiText = reply || message || "Hmm, I didn’t catch that."
       setMessages((prev) => [...prev, { role: 'ai', text: aiText }])

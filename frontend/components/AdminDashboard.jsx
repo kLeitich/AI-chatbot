@@ -5,7 +5,7 @@ import api from '../lib/api'
 import AppointmentTable from './AppointmentTable'
 import Calendar from './Calendar'
 
-export default function AdminDashboard() {
+export default function AdminDashboard({ tenant = 'default' }) {
   const [appointments, setAppointments] = useState([])
   const [editing, setEditing] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -25,12 +25,12 @@ export default function AdminDashboard() {
   const load = async () => {
     setLoading(true)
     try {
-      const res = await api.get('/admin/appointments')
+      const res = await api.get(`/t/${tenant}/admin/appointments`)
       setAppointments(res.data || [])
     } catch (e) {
       if (e?.response?.status === 401) {
         localStorage.removeItem('token')
-        router.replace('/admin/login')
+        router.replace(`/t/${tenant}/login`)
       }
     } finally {
       setLoading(false)
@@ -57,16 +57,16 @@ export default function AdminDashboard() {
 
   const onDelete = async (a) => {
     if (!confirm(`Delete appointment #${a.id}?`)) return
-    await api.delete(`/admin/appointments/${a.id}`)
+    await api.delete(`/t/${tenant}/admin/appointments/${a.id}`)
     load()
   }
 
   const onSave = async () => {
     const { id, ...rest } = editing
     if (id) {
-      await api.put(`/admin/appointments/${id}`, rest)
+      await api.put(`/t/${tenant}/admin/appointments/${id}`, rest)
     } else {
-      await api.post('/admin/appointments', rest)
+      await api.post(`/t/${tenant}/admin/appointments`, rest)
     }
     setEditing(null)
     await load() // Always refresh for modal adds/edits
@@ -93,7 +93,7 @@ export default function AdminDashboard() {
               <button className={`px-3 py-1 text-sm ${calendarMode === 'week' ? 'bg-gray-900 text-white' : 'bg-white'}`} onClick={() => setCalendarMode('week')}>Week</button>
             </div>
           )}
-          <button className="text-sm text-red-600" onClick={() => { localStorage.removeItem('token'); router.replace('/admin/login') }}>Log out</button>
+          <button className="text-sm text-red-600" onClick={() => { localStorage.removeItem('token'); router.replace(`/t/${tenant}/login`) }}>Log out</button>
         </div>
       </div>
 

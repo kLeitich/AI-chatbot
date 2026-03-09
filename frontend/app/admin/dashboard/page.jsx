@@ -1,13 +1,6 @@
-"use client"
-import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import AdminDashboard from '../../../components/AdminDashboard'
+import { redirect } from 'next/navigation'
 
 export default function Page() {
-  const router = useRouter()
-  useEffect(() => {
-    const token = typeof window !== 'undefined' && localStorage.getItem('token')
-    if (!token) router.replace('/admin/login')
-  }, [router])
-  return <AdminDashboard />
+  // Backwards-compat: send /admin/dashboard to default tenant dashboard
+  redirect('/t/default/admin/dashboard')
 }

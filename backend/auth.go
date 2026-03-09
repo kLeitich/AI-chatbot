@@ -34,15 +34,16 @@ func checkPasswordHash(password, hash string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 
-func createJWTToken(userID uint, email string) (string, error) {
+func createJWTToken(userID uint, email string, tenantID uint) (string, error) {
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
 		secret = "supersecret"
 	}
 	claims := jwt.MapClaims{
-		"sub":   userID,
-		"email": email,
-		"exp":   time.Now().Add(24 * time.Hour).Unix(),
+		"sub":      userID,
+		"email":    email,
+		"tenantId": tenantID,
+		"exp":      time.Now().Add(24 * time.Hour).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(secret))
@@ -56,11 +57,21 @@ func registerHandler(c *fiber.Ctx) error {
 	if !validateEmail(req.Email) || len(req.Password) < 6 {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid email or password")
 	}
+
+	tenantSlug := c.Params("tenant")
+	if tenantSlug == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "missing tenant")
+	}
+
+	var tenant Tenant
+	if err := db.Where("slug = ?", tenantSlug).First(&tenant).Error; err != nil {
+		return fiber.NewError(fiber.StatusNotFound, "tenant not found")
+	}
 	pw, err := hashPassword(req.Password)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to hash password")
 	}
-	user := User{Email: req.Email, Password: pw}
+	user := User{Email: req.Email, Password: pw, TenantID: tenant.ID}
 	if err := db.Create(&user).Error; err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "user may already exist")
 	}
@@ -75,26 +86,38 @@ func loginHandler(c *fiber.Ctx) error {
 	if !validateEmail(req.Email) || len(req.Password) < 6 {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid email or password")
 	}
+
+	// Resolve tenant from URL path (e.g. /t/:tenant/login)
+	tenantSlug := c.Params("tenant")
+	if tenantSlug == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "missing tenant")
+	}
+
+	var tenant Tenant
+	if err := db.Where("slug = ?", tenantSlug).First(&tenant).Error; err != nil {
+		return fiber.NewError(fiber.StatusNotFound, "tenant not found")
+	}
+
 	var user User
-	if err := db.Where("email = ?", req.Email).First(&user).Error; err != nil {
+	if err := db.Where("email = ? AND tenant_id = ?", req.Email, tenant.ID).First(&user).Error; err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "invalid credentials")
 	}
 	if !checkPasswordHash(req.Password, user.Password) {
 		return fiber.NewError(fiber.StatusUnauthorized, "invalid credentials")
 	}
-	tok, err := createJWTToken(user.ID, user.Email)
+	tok, err := createJWTToken(user.ID, user.Email, user.TenantID)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to create token")
 	}
 	return c.JSON(authResponse{Token: tok})
 }
 
-func ensureDefaultAdmin(email, password string) error {
+func ensureDefaultAdmin(tenantID uint, email, password string) error {
 	if email == "" || password == "" {
 		return errors.New("email or password empty")
 	}
 	var count int64
-	db.Model(&User{}).Where("email = ?", email).Count(&count)
+	db.Model(&User{}).Where("email = ? AND tenant_id = ?", email, tenantID).Count(&count)
 	if count > 0 {
 		return nil
 	}
@@ -102,5 +125,9 @@ func ensureDefaultAdmin(email, password string) error {
 	if err != nil {
 		return err
 	}
-	return db.Create(&User{Email: email, Password: hash}).Error
+	return db.Create(&User{
+		Email:    email,
+		Password: hash,
+		TenantID: tenantID,
+	}).Error
 }
