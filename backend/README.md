@@ -34,22 +34,24 @@ The backend automatically loads environment variables from `.env` file if it exi
 - **Name Extraction**: Handles patterns like "Kevin Leitich, i want to see..." or "my name is..."
 - **Doctor Extraction**: Handles "Dr. Kim", "doctor Kim", "i want to see Wangechi"
 
-### API Endpoints
+### API Endpoints (Multitenant)
+
+All tenant-aware endpoints are prefixed with `/t/{tenant}` where `{tenant}` is a slug like `default`, `clinic-a`, etc.
 
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/health` | Health check |
-| POST | `/chat` | AI-powered chat booking (requires `message` and optional `session_id`) |
-| POST | `/register` | User registration |
-| POST | `/login` | Admin/user login |
-| GET | `/admin/appointments` | List all appointments (requires JWT) |
-| POST | `/admin/appointments` | Create appointment manually (requires JWT) |
-| PUT | `/admin/appointments/:id` | Update appointment (requires JWT) |
-| DELETE | `/admin/appointments/:id` | Delete appointment (requires JWT) |
+| POST | `/t/{tenant}/chat` | AI-powered chat booking (requires `message` and optional `session_id`) |
+| POST | `/t/{tenant}/register` | User registration for that tenant |
+| POST | `/t/{tenant}/login` | Admin/user login for that tenant |
+| GET | `/t/{tenant}/admin/appointments` | List all appointments (requires JWT) |
+| POST | `/t/{tenant}/admin/appointments` | Create appointment manually (requires JWT) |
+| PUT | `/t/{tenant}/admin/appointments/:id` | Update appointment (requires JWT) |
+| DELETE | `/t/{tenant}/admin/appointments/:id` | Delete appointment (requires JWT) |
 
 ### Chat Endpoint Details
 
-**Request**:
+**Request (default tenant)**:
 ```json
 {
   "message": "Book me with Dr. Kim for 3 nov at 4pm",

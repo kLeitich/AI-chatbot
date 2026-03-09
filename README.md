@@ -1,6 +1,6 @@
 # AI-Powered Doctor Appointment Chatbot
 
-A Go + React full-stack chatbot integrated with Groq API to handle natural language appointment scheduling with intelligent conversation state management.
+A Go + Next.js + Go/Fiber full-stack chatbot integrated with the Groq API to handle natural language appointment scheduling with intelligent conversation state management.
 
 ## Features
 - Natural chat-driven booking with conversational memory
@@ -10,6 +10,7 @@ A Go + React full-stack chatbot integrated with Groq API to handle natural langu
 - Context-aware responses that remember previous messages
 - Admin panel for appointment management (table + calendar views)
 - Calendar dashboard to view and manage appointments (create/edit/delete)
+- **Multitenant architecture** (multiple clinics via `/t/{tenant}/...` routes)
 - Cloud LLM integration (Groq API)
 - Dockerized full stack
 - Automatic .env file loading
@@ -46,7 +47,7 @@ cp frontend/env.example frontend/.env
 - `DEFAULT_ADMIN_PASSWORD` (default: admin123)
 - `FRONTEND_URL` (default: http://localhost:3000 for local dev) - **Required in production**: Set to your Vercel URL (e.g., https://ai-chatbot-gamma-blue-98.vercel.app)
 
-**Frontend (.env)**: 
+**Frontend (.env)** (Next.js): 
 - `NEXT_PUBLIC_API_URL` (default: http://localhost:8080 for local dev) - **Required in production**: Set to your Render backend URL (e.g., https://ai-chatbot-1vkx.onrender.com)
 
 **Note**: Both services work out of the box for local development. No environment variables are required for local testing. For production deployment, set the environment variables as described in the Production Deployment section below.
@@ -72,12 +73,18 @@ cp frontend/env.example frontend/.env
    go run .
    ```
 
-### Frontend
+### Frontend (Next.js App Router)
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
+
+Local URLs:
+
+- Chatbot (default tenant): `http://localhost:3000/t/default`
+- Admin login (default tenant): `http://localhost:3000/t/default/login`
+- Admin dashboard (default tenant): `http://localhost:3000/t/default/admin/dashboard`
 
 ## Docker Deployment
 ```bash
@@ -117,33 +124,35 @@ Access:
 |---|---|
 | admin@example.com | admin123 |
 
-## API Endpoints
+## API Endpoints (Multitenant)
+
+All tenant-aware endpoints are prefixed with `/t/{tenant}` where `{tenant}` is a slug like `default`, `clinic-a`, etc.
 
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | /chat | AI booking handler |
-| POST | /login | Admin login |
-| GET | /admin/appointments | List appointments |
-| POST | /admin/appointments | Create appointment |
-| PUT | /admin/appointments/:id | Update |
-| DELETE | /admin/appointments/:id | Delete |
+| POST | `/t/{tenant}/chat` | AI booking handler |
+| POST | `/t/{tenant}/login` | Admin login |
+| GET | `/t/{tenant}/admin/appointments` | List appointments |
+| POST | `/t/{tenant}/admin/appointments` | Create appointment |
+| PUT | `/t/{tenant}/admin/appointments/:id` | Update appointment |
+| DELETE | `/t/{tenant}/admin/appointments/:id` | Delete appointment |
 
 ## Example Chat Request
 
 The chatbot supports natural language booking with conversation memory:
 
 ```bash
-# Single message booking
-curl -X POST http://localhost:8080/chat \
+# Single message booking (default tenant)
+curl -X POST http://localhost:8080/t/default/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "Book me with Dr. Kim for 3 nov at 11am", "session_id": "user123"}'
 
 # Multi-turn conversation (session_id maintains context)
-curl -X POST http://localhost:8080/chat \
+curl -X POST http://localhost:8080/t/default/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "Kevin leitich, i would like to see Wangechi", "session_id": "user123"}'
 
-curl -X POST http://localhost:8080/chat \
+curl -X POST http://localhost:8080/t/default/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "3 nov at 4pm", "session_id": "user123"}'
 ```
