@@ -1,5 +1,6 @@
 "use client"
 import { useEffect, useState } from 'react'
+import DashboardNav from '../../../components/DashboardNav'
 import api from '../../../lib/api'
 
 export default function Page() {
@@ -25,8 +26,9 @@ export default function Page() {
   }, [])
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
-      <div className="mx-auto max-w-6xl space-y-6">
+      <div className="min-h-screen bg-slate-50">
+          <DashboardNav isPlatform={true} />
+          <div className="mx-auto max-w-6xl p-6 space-y-6">
         <div className="rounded-3xl bg-white p-6 shadow-sm">
           <h1 className="text-2xl font-semibold text-slate-900">Platform Dashboard</h1>
           <p className="mt-2 text-sm text-slate-600">View all tenant companies and registered users across the platform.</p>

@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import api from '../lib/api'
 import AppointmentTable from './AppointmentTable'
 import Calendar from './Calendar'
+import DashboardNav from './DashboardNav'
 
 export default function AdminDashboard({ tenant = 'default' }) {
   const [appointments, setAppointments] = useState([])
@@ -78,24 +79,24 @@ export default function AdminDashboard({ tenant = 'default' }) {
   }
 
   return (
-    <div className="max-w-5xl mx-auto p-4 space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Admin Dashboard</h1>
-        <div className="flex items-center gap-3">
-          <button className="px-3 py-1 rounded bg-blue-600 text-white" onClick={onAddFromTable}>New</button>
-          <div className="inline-flex border rounded overflow-hidden">
-            <button className={`px-3 py-1 text-sm ${view === 'table' ? 'bg-blue-600 text-white' : 'bg-white'}`} onClick={() => setView('table')}>Table</button>
-            <button className={`px-3 py-1 text-sm ${view === 'calendar' ? 'bg-blue-600 text-white' : 'bg-white'}`} onClick={() => setView('calendar')}>Calendar</button>
-          </div>
-          {view === 'calendar' && (
+    <div className="min-h-screen bg-slate-50">
+      <DashboardNav tenant={tenant} isPlatform={false} />
+      <div className="max-w-5xl mx-auto p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button className="px-3 py-1 rounded bg-blue-600 text-white" onClick={onAddFromTable}>New</button>
             <div className="inline-flex border rounded overflow-hidden">
-              <button className={`px-3 py-1 text-sm ${calendarMode === 'month' ? 'bg-gray-900 text-white' : 'bg-white'}`} onClick={() => setCalendarMode('month')}>Month</button>
-              <button className={`px-3 py-1 text-sm ${calendarMode === 'week' ? 'bg-gray-900 text-white' : 'bg-white'}`} onClick={() => setCalendarMode('week')}>Week</button>
+              <button className={`px-3 py-1 text-sm ${view === 'table' ? 'bg-blue-600 text-white' : 'bg-white'}`} onClick={() => setView('table')}>Table</button>
+              <button className={`px-3 py-1 text-sm ${view === 'calendar' ? 'bg-blue-600 text-white' : 'bg-white'}`} onClick={() => setView('calendar')}>Calendar</button>
             </div>
-          )}
-          <button className="text-sm text-red-600" onClick={() => { localStorage.removeItem('token'); router.replace(`/t/${tenant}/login`) }}>Log out</button>
+            {view === 'calendar' && (
+              <div className="inline-flex border rounded overflow-hidden">
+                <button className={`px-3 py-1 text-sm ${calendarMode === 'month' ? 'bg-gray-900 text-white' : 'bg-white'}`} onClick={() => setCalendarMode('month')}>Month</button>
+                <button className={`px-3 py-1 text-sm ${calendarMode === 'week' ? 'bg-gray-900 text-white' : 'bg-white'}`} onClick={() => setCalendarMode('week')}>Week</button>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
 
       {view === 'table' && (
         <div className="bg-white border rounded p-3 shadow space-y-2">
@@ -151,6 +152,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
           </div>
         </div>
       )}
+      </div>
     </div>
   )
 }

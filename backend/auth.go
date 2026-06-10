@@ -271,3 +271,121 @@ func generateTenantSlug(name string) string {
 	}
 	return result.String()
 }
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+type createUserRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	Role     string `json:"role"`
+}
+
+func changePasswordHandler(c *fiber.Ctx) error {
+	userID := c.Locals("user_id").(uint)
+	
+	var req changePasswordRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+
+	if len(req.NewPassword) < 6 {
+		return fiber.NewError(fiber.StatusBadRequest, "new password must be at least 6 characters")
+	}
+
+	var user User
+	if err := db.First(&user, userID).Error; err != nil {
+		return fiber.NewError(fiber.StatusNotFound, "user not found")
+	}
+
+	// Verify current password
+	if !checkPasswordHash(req.CurrentPassword, user.Password) {
+		return fiber.NewError(fiber.StatusUnauthorized, "current password is incorrect")
+	}
+
+	// Hash and update new password
+	hashedPassword, err := hashPassword(req.NewPassword)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to hash password")
+	}
+
+	if err := db.Model(&user).Update("password", hashedPassword).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to update password")
+	}
+
+	return c.JSON(fiber.Map{"message": "password changed successfully"})
+}
+
+func createUserHandler(c *fiber.Ctx) error {
+	tenantID := c.Locals("tenant_id").(uint)
+	
+	var req createUserRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+
+	if !validateEmail(req.Email) || len(req.Password) < 6 {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid email or password")
+	}
+
+	if req.Role == "" {
+		req.Role = "user"
+	}
+
+	// Hash password
+	hashedPassword, err := hashPassword(req.Password)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to hash password")
+	}
+
+	// Create user scoped to tenant
+	user := User{
+		Email:    req.Email,
+		Password: hashedPassword,
+		Role:     req.Role,
+		TenantID: tenantID,
+	}
+
+	if err := db.Create(&user).Error; err != nil {
+		return fiber.NewError(fiber.StatusConflict, "user already exists")
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"message": "user created successfully", "email": req.Email})
+}
+
+func createPlatformUserHandler(c *fiber.Ctx) error {
+	var req createUserRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+
+	if !validateEmail(req.Email) || len(req.Password) < 6 {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid email or password")
+	}
+
+	if req.Role != "platform_admin" && req.Role != "user" {
+		req.Role = "user"
+	}
+
+	// Hash password
+	hashedPassword, err := hashPassword(req.Password)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to hash password")
+	}
+
+	// Create platform user
+	user := User{
+		Email:    req.Email,
+		Password: hashedPassword,
+		Role:     req.Role,
+		TenantID: 0,
+	}
+
+	if err := db.Create(&user).Error; err != nil {
+		return fiber.NewError(fiber.StatusConflict, "user already exists")
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"message": "user created successfully", "email": req.Email})
+}
