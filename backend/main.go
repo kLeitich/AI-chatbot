@@ -59,19 +59,19 @@ func main() {
 	// ✅ CORS Configuration (works for both local and production)
 	// Default to localhost for local development, use env var for production
 	frontendURL := getEnv("FRONTEND_URL", "http://localhost:3000")
-
+	
 	// Always allow localhost for local development, add production URL if different
 	allowedOrigins := "http://localhost:3000"
 	if frontendURL != "http://localhost:3000" {
 		allowedOrigins = frontendURL + ", http://localhost:3000"
 	}
-
+	
 	log.Printf("[config] Allowing frontend origins: %s", allowedOrigins)
 
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     allowedOrigins,
-		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
-		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
+		AllowOrigins: allowedOrigins,
+		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
+		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
 		AllowCredentials: true,
 	}))
 
@@ -83,11 +83,13 @@ func main() {
 	// Global auth endpoints
 	app.Post("/auth/register", companyRegisterHandler)
 	app.Post("/auth/platform/login", platformLoginHandler)
+	app.Post("/auth/change-password", jwtMiddleware, changePasswordHandler)
 
 	// Platform admin endpoints
 	platform := app.Group("/platform", jwtMiddleware, platformAdminMiddleware)
 	platform.Get("/companies", listCompanies)
 	platform.Get("/users", listUsers)
+	platform.Post("/users", createPlatformUserHandler)
 
 	// Tenant-scoped API under /t/:tenant/...
 	tenant := app.Group("/t/:tenant")
@@ -95,12 +97,19 @@ func main() {
 	tenant.Post("/chat", chatHandler)
 	tenant.Post("/register", registerHandler)
 	tenant.Post("/login", loginHandler)
+	tenant.Post("/change-password", jwtMiddleware, changePasswordHandler)
+	tenant.Get("/doctors", listDoctors)
+	tenant.Get("/reasons", listReasons)
+	tenant.Get("/availability", getAvailability)
 
 	admin := tenant.Group("/admin", jwtMiddleware)
 	admin.Get("/appointments", listAppointments)
 	admin.Post("/appointments", createAppointment)
 	admin.Put("/appointments/:id", updateAppointment)
 	admin.Delete("/appointments/:id", deleteAppointment)
+	admin.Post("/users", createUserHandler)
+	admin.Post("/doctors", createDoctor)
+	admin.Post("/reasons", createReason)
 
 	// ✅ Graceful shutdown handling
 	go func() {

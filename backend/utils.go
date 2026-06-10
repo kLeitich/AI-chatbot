@@ -35,6 +35,16 @@ func isValidTime(t string) bool {
 	return err == nil
 }
 
+func isAffirmative(message string) bool {
+	msg := strings.TrimSpace(strings.ToLower(message))
+	return regexp.MustCompile(`(?i)^(yes|yeah|yep|sure|confirm|correct|that sounds good|go ahead|please do|ok|okay)$`).MatchString(msg)
+}
+
+func isNegative(message string) bool {
+	msg := strings.TrimSpace(strings.ToLower(message))
+	return regexp.MustCompile(`(?i)^(no|nah|nope|not yet|change|wrong|don'?t|do not|dont)$`).MatchString(msg)
+}
+
 // conversation memory store
 var (
 	convMuRW syncWrapper

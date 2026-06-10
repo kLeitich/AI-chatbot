@@ -22,7 +22,7 @@ func initDatabase(dbPath string) uint {
 		log.Fatalf("failed to connect database: %v", err)
 	}
 
-	if err := db.AutoMigrate(&Tenant{}, &User{}, &Appointment{}); err != nil {
+	if err := db.AutoMigrate(&Tenant{}, &User{}, &Doctor{}, &ReasonOption{}, &Appointment{}); err != nil {
 		log.Fatalf("failed to migrate database: %v", err)
 	}
 
@@ -82,5 +82,32 @@ func seedSampleData(defaultTenantID uint) {
 	}
 	for _, ap := range samples {
 		_ = db.Create(&ap).Error
+	}
+
+	// Seed admin-managed doctor and reason options for initial tenant
+	doctorCount := int64(0)
+	db.Model(&Doctor{}).Where("tenant_id = ?", defaultTenantID).Count(&doctorCount)
+	if doctorCount == 0 {
+		doctors := []Doctor{
+			{TenantID: defaultTenantID, Name: "Dr. Kim", Specialty: "Primary Care", Bio: "Experienced general practitioner for family care."},
+			{TenantID: defaultTenantID, Name: "Dr. Mercy", Specialty: "Pediatrics", Bio: "Child health and wellness specialist."},
+			{TenantID: defaultTenantID, Name: "Dr. Lee", Specialty: "Cardiology", Bio: "Heart and vascular care with 10+ years of experience."},
+		}
+		for _, d := range doctors {
+			_ = db.Create(&d).Error
+		}
+	}
+
+	reasonCount := int64(0)
+	db.Model(&ReasonOption{}).Where("tenant_id = ?", defaultTenantID).Count(&reasonCount)
+	if reasonCount == 0 {
+		reasons := []ReasonOption{
+			{TenantID: defaultTenantID, Label: "checkup"},
+			{TenantID: defaultTenantID, Label: "consultation"},
+			{TenantID: defaultTenantID, Label: "follow-up"},
+		}
+		for _, r := range reasons {
+			_ = db.Create(&r).Error
+		}
 	}
 }

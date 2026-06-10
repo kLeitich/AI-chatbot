@@ -145,9 +145,12 @@ Check the "You ALREADY have" section - NEVER ask for anything listed there.
 					PatientName: cleanName,
 					Status:      "pending",
 				}
-				reply, err := AskConversationalReply(model, userMessage, conv)
-				if err != nil {
-					return Appointment{}, "I'm here to help! Could you please rephrase that?", err
+				reply := nextQuestionForDraft(conv, app)
+				if reply == "" {
+					reply, err = AskConversationalReply(model, userMessage, conv)
+					if err != nil {
+						return Appointment{}, "I'm here to help! Could you please rephrase that?", err
+					}
 				}
 				return app, reply, nil
 			}
@@ -172,9 +175,12 @@ Check the "You ALREADY have" section - NEVER ask for anything listed there.
 							Doctor: "Dr. " + without,
 							Status: "pending",
 						}
-						reply, err := AskConversationalReply(model, userMessage, conv)
-						if err != nil {
-							return Appointment{}, "I'm here to help! Could you please rephrase that?", err
+						reply := nextQuestionForDraft(conv, app)
+						if reply == "" {
+							reply, err = AskConversationalReply(model, userMessage, conv)
+							if err != nil {
+								return Appointment{}, "I'm here to help! Could you please rephrase that?", err
+							}
 						}
 						return app, reply, nil
 					}
@@ -185,9 +191,12 @@ Check the "You ALREADY have" section - NEVER ask for anything listed there.
 						Doctor: "Dr. " + capitalized,
 						Status: "pending",
 					}
-					reply, err := AskConversationalReply(model, userMessage, conv)
-					if err != nil {
-						return Appointment{}, "I'm here to help! Could you please rephrase that?", err
+					reply := nextQuestionForDraft(conv, app)
+					if reply == "" {
+						reply, err = AskConversationalReply(model, userMessage, conv)
+						if err != nil {
+							return Appointment{}, "I'm here to help! Could you please rephrase that?", err
+						}
 					}
 					return app, reply, nil
 				}
