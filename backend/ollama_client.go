@@ -668,7 +668,7 @@ User just said: ` + message
 
 	reply := strings.TrimSpace(resp)
 	if reply == "" {
-		reply = "Sure! Could you tell me which doctor and date you’d like?"
+		reply = "Sure — could you tell me which doctor and date you’d like?"
 	}
 	return reply, nil
 }
@@ -704,7 +704,7 @@ func nextQuestionForDraft(conv ConversationState, app Appointment) string {
 		return fmt.Sprintf("What time works best for you on %s?", draft.Date)
 	}
 	if draft.Reason == "" {
-		return fmt.Sprintf("Perfect! I have the details so far. What is the reason for your appointment with %s on %s at %s?", draft.Doctor, draft.Date, draft.Time)
+		return fmt.Sprintf("Almost done — what’s the reason for your appointment with %s on %s at %s?", draft.Doctor, draft.Date, draft.Time)
 	}
 	return ""
 }

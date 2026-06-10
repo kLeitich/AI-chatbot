@@ -12,7 +12,8 @@ var (
 	timeRegex     = regexp.MustCompile(`^\d{2}:\d{2}$`)
 	monthNameRe   = regexp.MustCompile(`(?i)\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b`)
 	ordinalDayRe  = regexp.MustCompile(`(?i)\b(\d{1,2})(st|nd|rd|th)?\b`)
-	timePhraseRe  = regexp.MustCompile(`(?i)\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b`)
+	time24Re      = regexp.MustCompile(`\b([01]?\d|2[0-3]):([0-5]\d)\b`)
+	timeAmPmRe    = regexp.MustCompile(`(?i)\b(?:at\s*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b`)
 	tomorrowRe    = regexp.MustCompile(`(?i)\btomorrow\b`)
 	todayRe       = regexp.MustCompile(`(?i)\btoday\b`)
 	doctorNameRe  = regexp.MustCompile(`(?i)\bdoctor\s+([a-zA-Z]+)\b`)
@@ -87,42 +88,40 @@ func tryLocalParse(message string) (Appointment, bool) {
 
 	// Time
 	hhmm := ""
-	if m := timePhraseRe.FindStringSubmatch(msg); len(m) > 0 {
-		hour, _ := strconv.Atoi(m[1])
-		min := 0
-		if len(m) > 2 && m[2] != "" {
-			min, _ = strconv.Atoi(m[2])
-		}
-		ampm := ""
-		if len(m) > 3 {
-			ampm = strings.ToLower(m[3])
-		}
-		// Handle 12-hour format
-		if ampm == "pm" && hour < 12 {
-			hour += 12
-		}
-		if ampm == "am" && hour == 12 {
-			hour = 0
-		}
-		if hour >= 0 && hour <= 23 {
-			hhmm = formatTwo(hour) + ":" + formatTwo(min)
-		}
-	} else {
-		// Fallback: check for simple patterns like "5pm", "3am"
-		simpleTimeRe := regexp.MustCompile(`(?i)\b(\d{1,2})\s*(am|pm)\b`)
-		if m := simpleTimeRe.FindStringSubmatch(msg); len(m) > 2 {
+	candidates := []string{}
+
+	if matches := time24Re.FindAllStringSubmatch(msg, -1); len(matches) > 0 {
+		for _, m := range matches {
 			hour, _ := strconv.Atoi(m[1])
-			ampm := strings.ToLower(m[2])
+			min, _ := strconv.Atoi(m[2])
+			if hour >= 0 && hour <= 23 && min >= 0 && min < 60 {
+				candidates = append(candidates, formatTwo(hour)+":"+formatTwo(min))
+			}
+		}
+	}
+
+	if matches := timeAmPmRe.FindAllStringSubmatch(msg, -1); len(matches) > 0 {
+		for _, m := range matches {
+			hour, _ := strconv.Atoi(m[1])
+			min := 0
+			if m[2] != "" {
+				min, _ = strconv.Atoi(m[2])
+			}
+			ampm := strings.ToLower(m[3])
 			if ampm == "pm" && hour < 12 {
 				hour += 12
 			}
 			if ampm == "am" && hour == 12 {
 				hour = 0
 			}
-			if hour >= 0 && hour <= 23 {
-				hhmm = formatTwo(hour) + ":00"
+			if hour >= 0 && hour <= 23 && min >= 0 && min < 60 {
+				candidates = append(candidates, formatTwo(hour)+":"+formatTwo(min))
 			}
 		}
+	}
+
+	if len(candidates) > 0 {
+		hhmm = candidates[len(candidates)-1]
 	}
 
 	// Date
