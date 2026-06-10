@@ -15,9 +15,10 @@ type Tenant struct {
 }
 
 type User struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	Email     string    `gorm:"uniqueIndex:idx_user_email_tenant;size:255;not null" json:"email"`
-	Password  string    `json:"-"`
+	ID       uint   `gorm:"primaryKey" json:"id"`
+	Email    string `gorm:"uniqueIndex:idx_user_email_tenant;size:255;not null" json:"email"`
+	Password string `json:"-"`
+	Role     string `gorm:"size:100;default:user" json:"role"`
 	// TenantID is nullable in the schema for easier migration from single-tenant.
 	// Application code should always treat it as required and backfill defaults.
 	TenantID  uint      `gorm:"index" json:"tenant_id"`
@@ -26,7 +27,7 @@ type User struct {
 }
 
 type Appointment struct {
-	ID          uint      `gorm:"primaryKey" json:"id"`
+	ID uint `gorm:"primaryKey" json:"id"`
 	// See comment on User.TenantID – nullable at DB level, required in app logic.
 	TenantID    uint      `gorm:"index" json:"tenant_id"`
 	PatientName string    `gorm:"size:255;not null" json:"patient_name"`

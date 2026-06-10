@@ -36,6 +36,17 @@ func jwtMiddleware(c *fiber.Ctx) error {
 	if tid, ok := claims["tenantId"].(float64); ok {
 		c.Locals("tenant_id", uint(tid))
 	}
+	if role, ok := claims["role"].(string); ok {
+		c.Locals("role", role)
+	}
 
+	return c.Next()
+}
+
+func platformAdminMiddleware(c *fiber.Ctx) error {
+	role, ok := c.Locals("role").(string)
+	if !ok || role != "platform_admin" {
+		return fiber.NewError(fiber.StatusForbidden, "platform admin access required")
+	}
 	return c.Next()
 }

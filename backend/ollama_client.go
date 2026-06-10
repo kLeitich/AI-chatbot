@@ -251,7 +251,7 @@ Check the "You ALREADY have" section - NEVER ask for anything listed there.
 			if normalizedTime != "" {
 				tmp.Time = normalizedTime
 			}
-			
+
 			// Merge with conversation draft (use draft values if extracted ones are empty)
 			app := Appointment{
 				PatientName: choose(tmp.PatientName, conv.Draft.PatientName),
@@ -261,7 +261,7 @@ Check the "You ALREADY have" section - NEVER ask for anything listed there.
 				Reason:      choose(tmp.Reason, conv.Draft.Reason),
 				Status:      "pending",
 			}
-			
+
 			// Also normalize the final time in case it came from conversation draft
 			if app.Time != "" {
 				app.Time = normalizeTime(app.Time)
@@ -274,10 +274,10 @@ Check the "You ALREADY have" section - NEVER ask for anything listed there.
 			reply := tmp.Reply
 			if reply == "" {
 				if app.Reason != "" {
-					reply = fmt.Sprintf("Perfect! I've booked your appointment with %s on %s at %s for %s. Thank you!", 
+					reply = fmt.Sprintf("Perfect! I've booked your appointment with %s on %s at %s for %s. Thank you!",
 						app.Doctor, app.Date, app.Time, app.Reason)
 				} else {
-					reply = fmt.Sprintf("Perfect! I've booked your appointment with %s on %s at %s. Thank you!", 
+					reply = fmt.Sprintf("Perfect! I've booked your appointment with %s on %s at %s. Thank you!",
 						app.Doctor, app.Date, app.Time)
 				}
 			}
@@ -357,7 +357,7 @@ Check the "You ALREADY have" section - NEVER ask for anything listed there.
 	doctorRe := regexp.MustCompile(`(?i)\b(?:dr\.?|doctor)\s+([a-zA-Z]+)\b`)
 	// Pattern 2: "i want to see X" or "i would like to see X" (where X might be a doctor name)
 	seeDoctorRe := regexp.MustCompile(`(?i)(?:want to see|would like to see|like to see|see|see dr\.?|see doctor)\s+([A-Z][a-zA-Z]+)`)
-	
+
 	var doctorName string
 	if matches := doctorRe.FindStringSubmatch(userMessage); len(matches) > 1 {
 		doctorName = strings.ToLower(matches[1])
@@ -369,7 +369,7 @@ Check the "You ALREADY have" section - NEVER ask for anything listed there.
 		// Extract from "see Wangechi" pattern
 		doctorName = strings.TrimSpace(matches[1])
 	}
-	
+
 	if doctorName != "" {
 		partialApp := Appointment{
 			Doctor:      "Dr. " + doctorName,
@@ -448,7 +448,7 @@ Check the "You ALREADY have" section - NEVER ask for anything listed there.
 			if app.Reason != "" {
 				reasonText = fmt.Sprintf(" for %s", app.Reason)
 			}
-			return app, fmt.Sprintf("Perfect! I've booked your appointment with %s on %s at %s%s. Thank you, %s!", 
+			return app, fmt.Sprintf("Perfect! I've booked your appointment with %s on %s at %s%s. Thank you, %s!",
 				app.Doctor, app.Date, app.Time, reasonText, app.PatientName), nil
 		}
 		// Or if it's just a simple name (single word or two words)
@@ -476,7 +476,7 @@ Check the "You ALREADY have" section - NEVER ask for anything listed there.
 				if app.Reason != "" {
 					reasonText = fmt.Sprintf(" for %s", app.Reason)
 				}
-				return app, fmt.Sprintf("Perfect! I've booked your appointment with %s on %s at %s%s. Thank you, %s!", 
+				return app, fmt.Sprintf("Perfect! I've booked your appointment with %s on %s at %s%s. Thank you, %s!",
 					app.Doctor, app.Date, app.Time, reasonText, app.PatientName), nil
 			}
 		}
@@ -486,7 +486,7 @@ Check the "You ALREADY have" section - NEVER ask for anything listed there.
 	if conv.Draft.Doctor != "" && conv.Draft.Date != "" && conv.Draft.Time != "" && conv.Draft.PatientName != "" {
 		// We have all required fields! Use reason from draft or current message
 		finalReason := choose(strings.TrimSpace(userMessage), conv.Draft.Reason)
-		
+
 		// If current message looks like a reason, use it
 		msgLower := strings.ToLower(strings.TrimSpace(userMessage))
 		reasonKeywords := []string{
@@ -501,18 +501,18 @@ Check the "You ALREADY have" section - NEVER ask for anything listed there.
 				break
 			}
 		}
-		
+
 		// If it's a short message (1-3 words), treat it as reason if it matches keywords
 		words := strings.Fields(userMessage)
 		if isReasonKeyword || (len(words) <= 3 && len(words) > 0 && finalReason == "") {
 			finalReason = strings.TrimSpace(userMessage)
 		}
-		
+
 		// If we still don't have reason, use default
 		if finalReason == "" {
 			finalReason = "general consultation"
 		}
-		
+
 		app := Appointment{
 			PatientName: conv.Draft.PatientName,
 			Doctor:      conv.Draft.Doctor,
@@ -525,7 +525,7 @@ Check the "You ALREADY have" section - NEVER ask for anything listed there.
 		if err := SaveAppointment(app); err != nil {
 			fmt.Println("[DB Error]", err)
 		}
-		return app, fmt.Sprintf("Perfect! I've booked your appointment with %s on %s at %s for %s. Thank you, %s!", 
+		return app, fmt.Sprintf("Perfect! I've booked your appointment with %s on %s at %s for %s. Thank you, %s!",
 			app.Doctor, app.Date, app.Time, app.Reason, app.PatientName), nil
 	}
 
@@ -543,7 +543,7 @@ func AskConversationalReply(model, message string, conv ConversationState) (stri
 	// Build context about what we already know
 	contextInfo := ""
 	missingFields := []string{}
-	
+
 	if conv.Draft.Doctor != "" {
 		contextInfo += fmt.Sprintf("You already have the doctor: %s. ", conv.Draft.Doctor)
 	} else {

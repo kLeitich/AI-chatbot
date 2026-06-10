@@ -4,4 +4,3 @@ export default function Page({ params }) {
   const { tenant } = params
   return <AdminDashboard tenant={tenant} />
 }
-

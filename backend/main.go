@@ -49,27 +49,29 @@ func main() {
 	dbPath := getEnv("SQLITE_PATH", "appointments.db")
 	defaultTenantID := initDatabase(dbPath)
 
-	// Ensure default admin exists
+	// Ensure default tenant admin exists
 	_ = ensureDefaultAdmin(defaultTenantID, getEnv("DEFAULT_ADMIN_EMAIL", "admin@example.com"), getEnv("DEFAULT_ADMIN_PASSWORD", "admin123"))
+	// Ensure platform admin exists for platform-level management
+	_ = ensurePlatformAdmin(getEnv("DEFAULT_PLATFORM_ADMIN_EMAIL", "platform@example.com"), getEnv("DEFAULT_PLATFORM_ADMIN_PASSWORD", "platform123"))
 
 	app := fiber.New()
 
 	// ✅ CORS Configuration (works for both local and production)
 	// Default to localhost for local development, use env var for production
 	frontendURL := getEnv("FRONTEND_URL", "http://localhost:3000")
-	
+
 	// Always allow localhost for local development, add production URL if different
 	allowedOrigins := "http://localhost:3000"
 	if frontendURL != "http://localhost:3000" {
 		allowedOrigins = frontendURL + ", http://localhost:3000"
 	}
-	
+
 	log.Printf("[config] Allowing frontend origins: %s", allowedOrigins)
 
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: allowedOrigins,
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
-		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
+		AllowOrigins:     allowedOrigins,
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
+		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
 		AllowCredentials: true,
 	}))
 
@@ -80,6 +82,12 @@ func main() {
 
 	// Global auth endpoints
 	app.Post("/auth/register", companyRegisterHandler)
+	app.Post("/auth/platform/login", platformLoginHandler)
+
+	// Platform admin endpoints
+	platform := app.Group("/platform", jwtMiddleware, platformAdminMiddleware)
+	platform.Get("/companies", listCompanies)
+	platform.Get("/users", listUsers)
 
 	// Tenant-scoped API under /t/:tenant/...
 	tenant := app.Group("/t/:tenant")

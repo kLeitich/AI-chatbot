@@ -12,7 +12,7 @@ export default function CompanySignup() {
   })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [success, setSuccess] = useState(false)
+  const [successMessage, setSuccessMessage] = useState('')
   const router = useRouter()
 
   const handleChange = (e) => {
@@ -58,29 +58,19 @@ export default function CompanySignup() {
       if (tenant_id && token) {
         localStorage.setItem('token', token)
         localStorage.setItem('tenant_id', tenant_id)
-        setSuccess(true)
-        // Redirect to admin dashboard after 2 seconds
+        setSuccessMessage('Registration successful! Redirecting to dashboard...')
         setTimeout(() => {
           router.replace(`/t/${tenant_id}/admin/dashboard`)
-        }, 2000)
+        }, 900)
+        return
       }
+      setError('Registration completed but no tenant or token returned.')
     } catch (e) {
       const message = e?.response?.data?.error || 'Registration failed. Please try again.'
       setError(message)
     } finally {
       setLoading(false)
     }
-  }
-
-  if (success) {
-    return (
-      <div className="min-h-screen grid place-items-center p-4">
-        <div className="bg-green-50 border border-green-200 rounded p-6 w-full max-w-sm text-center space-y-3">
-          <h2 className="text-xl font-semibold text-green-800">Registration Successful!</h2>
-          <p className="text-green-700">Your company has been registered. Redirecting to dashboard...</p>
-        </div>
-      </div>
-    )
   }
 
   return (
@@ -138,6 +128,7 @@ export default function CompanySignup() {
         </div>
 
         {error && <p className="text-red-600 text-sm bg-red-50 p-3 rounded">{error}</p>}
+        {successMessage && <p className="text-green-600 text-sm bg-green-50 p-3 rounded">{successMessage}</p>}
 
         <button
           type="submit"

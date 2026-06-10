@@ -43,9 +43,9 @@ var (
 
 type syncWrapper struct{}
 
-func (syncWrapper) Lock()   {}
-func (syncWrapper) Unlock() {}
-func (syncWrapper) RLock()  {}
+func (syncWrapper) Lock()    {}
+func (syncWrapper) Unlock()  {}
+func (syncWrapper) RLock()   {}
 func (syncWrapper) RUnlock() {}
 
 func getConversation(sessionID string) ConversationState {
@@ -168,7 +168,7 @@ func tryLocalParse(message string) (Appointment, bool) {
 	if hhmm != "" {
 		hhmm = normalizeTime(hhmm)
 	}
-	
+
 	ap := Appointment{PatientName: patient, Doctor: doctor, Date: dateStr, Time: hhmm, Reason: reason, Status: "pending"}
 	if ap.Date != "" && isValidDate(ap.Date) && ap.Time != "" && isValidTime(ap.Time) {
 		return ap, true
@@ -178,18 +178,30 @@ func tryLocalParse(message string) (Appointment, bool) {
 
 func monthNameToNumber(m string) int {
 	switch m[:3] {
-	case "jan": return 1
-	case "feb": return 2
-	case "mar": return 3
-	case "apr": return 4
-	case "may": return 5
-	case "jun": return 6
-	case "jul": return 7
-	case "aug": return 8
-	case "sep": return 9
-	case "oct": return 10
-	case "nov": return 11
-	case "dec": return 12
+	case "jan":
+		return 1
+	case "feb":
+		return 2
+	case "mar":
+		return 3
+	case "apr":
+		return 4
+	case "may":
+		return 5
+	case "jun":
+		return 6
+	case "jul":
+		return 7
+	case "aug":
+		return 8
+	case "sep":
+		return 9
+	case "oct":
+		return 10
+	case "nov":
+		return 11
+	case "dec":
+		return 12
 	}
 	return int(time.Now().Month())
 }
@@ -207,14 +219,14 @@ func normalizeTime(timeStr string) string {
 	if timeStr == "" {
 		return ""
 	}
-	
+
 	timeStr = strings.TrimSpace(strings.ToLower(timeStr))
-	
+
 	// Already in HH:MM format?
 	if timeRegex.MatchString(timeStr) {
 		return timeStr
 	}
-	
+
 	// Try to extract time from patterns like "4pm", "2:30pm", "11am"
 	// Pattern 1: Simple "4pm" or "11am"
 	simpleRe := regexp.MustCompile(`^(\d{1,2})\s*(am|pm)$`)
@@ -231,7 +243,7 @@ func normalizeTime(timeStr string) string {
 			return formatTwo(hour) + ":00"
 		}
 	}
-	
+
 	// Pattern 2: "2:30pm" or "11:45am"
 	withMinRe := regexp.MustCompile(`^(\d{1,2}):(\d{2})\s*(am|pm)$`)
 	if m := withMinRe.FindStringSubmatch(timeStr); len(m) == 4 {
@@ -248,7 +260,7 @@ func normalizeTime(timeStr string) string {
 			return formatTwo(hour) + ":" + formatTwo(min)
 		}
 	}
-	
+
 	// If no match, return original (might already be in correct format)
 	return timeStr
 }

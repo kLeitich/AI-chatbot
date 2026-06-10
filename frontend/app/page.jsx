@@ -14,6 +14,9 @@ export default function Page() {
           <Link href="/t/default/login" className="px-6 py-3 rounded-lg border-2 border-blue-600 text-blue-600 font-semibold hover:bg-blue-50 text-center">
             Admin Login
           </Link>
+          <Link href="/platform/login" className="px-6 py-3 rounded-lg border-2 border-slate-600 text-slate-700 font-semibold hover:bg-slate-50 text-center">
+            Platform Admin Login
+          </Link>
           <Link href="/t/default" className="px-6 py-3 rounded-lg text-gray-600 font-semibold hover:underline text-center">
             Try Demo Chatbot
           </Link>

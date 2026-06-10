@@ -7,6 +7,7 @@ export default function AdminLogin({ tenant = 'default' }) {
   const [email, setEmail] = useState('admin@example.com')
   const [password, setPassword] = useState('admin123')
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(false)
   const router = useRouter()
 
@@ -14,10 +15,14 @@ export default function AdminLogin({ tenant = 'default' }) {
     e.preventDefault()
     setLoading(true)
     setError('')
+    setSuccess('')
     try {
       const res = await api.post(`/t/${tenant}/login`, { email, password })
       localStorage.setItem('token', res.data?.token || '')
-      router.replace(`/t/${tenant}/admin/dashboard`)
+      setSuccess('Login successful! Redirecting to dashboard...')
+      setTimeout(() => {
+        router.replace(`/t/${tenant}/admin/dashboard`)
+      }, 900)
     } catch (e) {
       setError('Invalid credentials')
     } finally {
@@ -32,6 +37,7 @@ export default function AdminLogin({ tenant = 'default' }) {
         <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="Email" className="w-full border rounded p-2" />
         <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="Password" className="w-full border rounded p-2" />
         {error && <p className="text-red-600 text-sm">{error}</p>}
+        {success && <p className="text-green-600 text-sm">{success}</p>}
         <button className="w-full bg-blue-600 text-white rounded p-2" disabled={loading}>{loading ? 'Signing in...' : 'Sign In'}</button>
       </form>
     </div>

@@ -36,7 +36,7 @@ func chatHandler(c *fiber.Ctx) error {
 
 	// Get conversation history
 	conv := getConversation(convKey)
-	
+
 	ap, reply, err := AskForAppointmentFromMessage("", req.Message, conv)
 	if err != nil {
 		log.Printf("[Chat Error] %v", err)
@@ -75,12 +75,12 @@ func chatHandler(c *fiber.Ctx) error {
 			ap.Time = normalizedTime // Also update the appointment object
 		}
 	}
-		setConversation(convKey, conv)
+	setConversation(convKey, conv)
 
 	// Check if we now have all required fields
-	updatedHasAll := conv.Draft.Doctor != "" && 
-		conv.Draft.PatientName != "" && 
-		isValidDate(conv.Draft.Date) && 
+	updatedHasAll := conv.Draft.Doctor != "" &&
+		conv.Draft.PatientName != "" &&
+		isValidDate(conv.Draft.Date) &&
 		isValidTime(conv.Draft.Time)
 
 	// CRITICAL: If we have all required fields, complete booking immediately - don't ask again
@@ -89,7 +89,7 @@ func chatHandler(c *fiber.Ctx) error {
 		finalReason := choose(ap.Reason, conv.Draft.Reason)
 		if strings.TrimSpace(finalReason) == "" {
 			// We have all required fields except reason - ask for it ONLY
-			reasonReply := fmt.Sprintf("Perfect! I have all the details. What is the reason for your appointment with %s on %s at %s?", 
+			reasonReply := fmt.Sprintf("Perfect! I have all the details. What is the reason for your appointment with %s on %s at %s?",
 				conv.Draft.Doctor, conv.Draft.Date, conv.Draft.Time)
 			return c.JSON(fiber.Map{"reply": reasonReply})
 		}
@@ -98,10 +98,10 @@ func chatHandler(c *fiber.Ctx) error {
 		if strings.TrimSpace(finalReason) == "" {
 			finalReason = "general consultation" // Default if still empty
 		}
-		
+
 		// Normalize time to ensure it's in correct format
 		finalTime := normalizeTime(conv.Draft.Time)
-		
+
 		finalApp := Appointment{
 			PatientName: conv.Draft.PatientName,
 			Doctor:      conv.Draft.Doctor,
@@ -112,7 +112,7 @@ func chatHandler(c *fiber.Ctx) error {
 		}
 
 		// Generate confirmation message
-		reply = fmt.Sprintf("Perfect! I've booked your appointment with %s on %s at %s for %s. Thank you, %s!", 
+		reply = fmt.Sprintf("Perfect! I've booked your appointment with %s on %s at %s for %s. Thank you, %s!",
 			finalApp.Doctor, finalApp.Date, finalApp.Time, finalApp.Reason, finalApp.PatientName)
 
 		finalApp.TenantID = tenant.ID
@@ -218,6 +218,22 @@ func deleteAppointment(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to delete")
 	}
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+func listCompanies(c *fiber.Ctx) error {
+	var companies []Tenant
+	if err := db.Order("created_at DESC").Find(&companies).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to list companies")
+	}
+	return c.JSON(companies)
+}
+
+func listUsers(c *fiber.Ctx) error {
+	var users []User
+	if err := db.Order("created_at DESC").Find(&users).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to list users")
+	}
+	return c.JSON(users)
 }
 
 func choose(a, b string) string {
