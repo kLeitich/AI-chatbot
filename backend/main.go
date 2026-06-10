@@ -77,6 +77,10 @@ func main() {
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok", "time": time.Now()})
 	})
+
+	// Global auth endpoints
+	app.Post("/auth/register", companyRegisterHandler)
+
 	// Tenant-scoped API under /t/:tenant/...
 	tenant := app.Group("/t/:tenant")
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/mail"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -18,6 +19,18 @@ type authRequest struct {
 
 type authResponse struct {
 	Token string `json:"token"`
+}
+
+type companyRegisterRequest struct {
+	CompanyName   string `json:"company_name"`
+	AdminEmail    string `json:"admin_email"`
+	AdminPassword string `json:"admin_password"`
+}
+
+type companyRegisterResponse struct {
+	TenantID string `json:"tenant_id"`
+	Token    string `json:"token"`
+	Message  string `json:"message"`
 }
 
 func validateEmail(email string) bool {
@@ -130,4 +143,83 @@ func ensureDefaultAdmin(tenantID uint, email, password string) error {
 		Password: hash,
 		TenantID: tenantID,
 	}).Error
+}
+
+func companyRegisterHandler(c *fiber.Ctx) error {
+	var req companyRegisterRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+
+	// Validate input
+	if !validateEmail(req.AdminEmail) || len(req.AdminPassword) < 6 {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid email or password (min 6 chars)")
+	}
+	if len(req.CompanyName) < 2 {
+		return fiber.NewError(fiber.StatusBadRequest, "company name must be at least 2 characters")
+	}
+
+	// Generate unique tenant slug from company name
+	tenantSlug := generateTenantSlug(req.CompanyName)
+
+	// Check if slug already exists
+	var existingTenant Tenant
+	if err := db.Where("slug = ?", tenantSlug).First(&existingTenant).Error; err == nil {
+		return fiber.NewError(fiber.StatusConflict, "company name already registered")
+	}
+
+	// Create new tenant
+	tenant := Tenant{
+		Slug: tenantSlug,
+		Name: req.CompanyName,
+	}
+	if err := db.Create(&tenant).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to create company")
+	}
+
+	// Hash password
+	hashedPassword, err := hashPassword(req.AdminPassword)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to process password")
+	}
+
+	// Create admin user for this tenant
+	adminUser := User{
+		Email:    req.AdminEmail,
+		Password: hashedPassword,
+		TenantID: tenant.ID,
+	}
+	if err := db.Create(&adminUser).Error; err != nil {
+		return fiber.NewError(fiber.StatusConflict, "admin email already registered")
+	}
+
+	// Create JWT token
+	token, err := createJWTToken(adminUser.ID, adminUser.Email, tenant.ID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to create token")
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(companyRegisterResponse{
+		TenantID: tenantSlug,
+		Token:    token,
+		Message:  "company registered successfully",
+	})
+}
+
+func generateTenantSlug(name string) string {
+	s := strings.ToLower(name)
+	s = strings.TrimSpace(s)
+	for strings.Contains(s, "  ") {
+		s = strings.ReplaceAll(s, "  ", " ")
+	}
+	s = strings.ReplaceAll(s, " ", "-")
+	s = strings.ReplaceAll(s, "_", "-")
+	// Remove invalid characters
+	var result strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
 }
