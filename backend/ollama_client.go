@@ -130,6 +130,7 @@ Check the "You ALREADY have" section - NEVER ask for anything listed there.
 	trimmed := strings.TrimSpace(userMessage)
 	words := strings.Fields(trimmed)
 	lastAI := strings.ToLower(conv.LastAIMessage)
+	var err error
 
 	if len(words) > 0 && len(words) <= 4 && lastAI != "" {
 		// If we just asked for the patient's name and we don't have one yet,
@@ -670,6 +671,42 @@ User just said: ` + message
 		reply = "Sure! Could you tell me which doctor and date you’d like?"
 	}
 	return reply, nil
+}
+
+func nextQuestionForDraft(conv ConversationState, app Appointment) string {
+	draft := conv.Draft
+	if app.PatientName != "" {
+		draft.PatientName = app.PatientName
+	}
+	if app.Doctor != "" {
+		draft.Doctor = app.Doctor
+	}
+	if app.Date != "" {
+		draft.Date = app.Date
+	}
+	if app.Time != "" {
+		draft.Time = app.Time
+	}
+	if app.Reason != "" {
+		draft.Reason = app.Reason
+	}
+
+	if draft.PatientName == "" {
+		return "What's your name, please?"
+	}
+	if draft.Doctor == "" {
+		return fmt.Sprintf("Which doctor would you like to see, %s?", draft.PatientName)
+	}
+	if draft.Date == "" {
+		return fmt.Sprintf("What date would you like to book with %s?", draft.Doctor)
+	}
+	if draft.Time == "" {
+		return fmt.Sprintf("What time works best for you on %s?", draft.Date)
+	}
+	if draft.Reason == "" {
+		return fmt.Sprintf("Perfect! I have the details so far. What is the reason for your appointment with %s on %s at %s?", draft.Doctor, draft.Date, draft.Time)
+	}
+	return ""
 }
 
 // SaveAppointment simulates DB persistence

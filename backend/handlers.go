@@ -38,6 +38,8 @@ func chatHandler(c *fiber.Ctx) error {
 	conv := getConversation(convKey)
 	messageText := strings.TrimSpace(req.Message)
 	lowerMessage := strings.ToLower(messageText)
+	var reply string
+	var err error
 
 	if conv.AwaitingConfirmation {
 		if isAffirmative(lowerMessage) {
