@@ -37,6 +37,12 @@ func chatHandler(c *fiber.Ctx) error {
 	// Get conversation history
 	conv := getConversation(convKey)
 	messageText := strings.TrimSpace(req.Message)
+	if messageText == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "message cannot be empty")
+	}
+	if len(messageText) > 1000 {
+		messageText = messageText[:1000]
+	}
 	lowerMessage := strings.ToLower(messageText)
 	var reply string
 	var err error
@@ -81,7 +87,7 @@ func chatHandler(c *fiber.Ctx) error {
 		conv.AwaitingConfirmation = false
 	}
 
-	ap, reply, err := AskForAppointmentFromMessage("", req.Message, conv)
+	ap, reply, err := AskForAppointmentFromMessage("", messageText, conv)
 	if err != nil {
 		log.Printf("[Chat Error] %v", err)
 	}

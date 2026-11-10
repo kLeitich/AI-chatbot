@@ -6,15 +6,17 @@ services:
       - "8080:8080"
     environment:
       - PORT=8080
-      - JWT_SECRET=supersecret
-      - OLLAMA_MODEL=phi3
+      - JWT_SECRET=${JWT_SECRET:-dev_insecure_jwt_secret_change_in_production}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GROQ_MODEL=${GROQ_MODEL:-llama-3.3-70b-versatile}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
     volumes:
       - ./backend/appointments.db:/app/appointments.db
   frontend:
     build: ./frontend
     ports:
-      - "80:80"
+      - "3000:3000"
     depends_on:
       - backend
     environment:
-      - VITE_API_URL=http://localhost:8080
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8080}

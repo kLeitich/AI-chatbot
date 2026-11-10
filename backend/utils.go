@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -46,26 +47,54 @@ func isNegative(message string) bool {
 	return regexp.MustCompile(`(?i)^(no|nah|nope|not yet|change|wrong|don'?t|do not|dont)$`).MatchString(msg)
 }
 
-// conversation memory store
+// conversation memory store with safe concurrent access and TTL eviction
+const sessionTTL = 2 * time.Hour
+
 var (
-	convMuRW syncWrapper
+	convMuRW sync.RWMutex
 	sessionM = map[string]ConversationState{}
 )
 
-type syncWrapper struct{}
+func init() {
+	// Background worker to evict expired sessions and prevent memory leaks
+	go func() {
+		ticker := time.NewTicker(15 * time.Minute)
+		for range ticker.C {
+			cleanupExpiredSessions()
+		}
+	}()
+}
 
-func (syncWrapper) Lock()    {}
-func (syncWrapper) Unlock()  {}
-func (syncWrapper) RLock()   {}
-func (syncWrapper) RUnlock() {}
+func cleanupExpiredSessions() {
+	convMuRW.Lock()
+	defer convMuRW.Unlock()
+	cutoff := time.Now().Add(-sessionTTL)
+	for id, s := range sessionM {
+		if !s.UpdatedAt.IsZero() && s.UpdatedAt.Before(cutoff) {
+			delete(sessionM, id)
+		}
+	}
+}
 
 func getConversation(sessionID string) ConversationState {
 	if sessionID == "" {
 		return ConversationState{}
 	}
 	convMuRW.RLock()
-	defer convMuRW.RUnlock()
-	return sessionM[sessionID]
+	s, ok := sessionM[sessionID]
+	convMuRW.RUnlock()
+
+	if !ok {
+		return ConversationState{}
+	}
+	// Expire if older than sessionTTL
+	if !s.UpdatedAt.IsZero() && time.Since(s.UpdatedAt) > sessionTTL {
+		convMuRW.Lock()
+		delete(sessionM, sessionID)
+		convMuRW.Unlock()
+		return ConversationState{}
+	}
+	return s
 }
 
 func setConversation(sessionID string, s ConversationState) {

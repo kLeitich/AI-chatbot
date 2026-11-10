@@ -3,7 +3,15 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import api from '../lib/api'
 
 function uuid() {
-  return crypto.randomUUID?.() || Math.random().toString(36).slice(2)
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID()
+  }
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const arr = new Uint8Array(16)
+    crypto.getRandomValues(arr)
+    return Array.from(arr, (b) => b.toString(16).padStart(2, '0')).join('')
+  }
+  return 'sess_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2)
 }
 
 function Toast({ text, onClose }) {
@@ -75,7 +83,7 @@ export default function Chatbot({ tenant = 'default' }) {
         <div ref={bottomRef} />
       </div>
       <div className="mt-3 flex gap-2">
-        <textarea value={input} onKeyDown={onKey} onChange={(e) => setInput(e.target.value)} placeholder="e.g., Book me with Dr. Kim tomorrow at 10am for checkup" className="flex-1 border rounded p-3 focus:outline-none focus:ring" rows={2} />
+        <textarea value={input} maxLength={1000} onKeyDown={onKey} onChange={(e) => setInput(e.target.value)} placeholder="e.g., Book me with Dr. Kim tomorrow at 10am for checkup" className="flex-1 border rounded p-3 focus:outline-none focus:ring" rows={2} />
         <button onClick={send} className="px-4 py-2 rounded bg-blue-600 text-white disabled:opacity-60" disabled={loading}>Send</button>
       </div>
       {toast && <Toast text={toast} onClose={() => setToast(null)} />}

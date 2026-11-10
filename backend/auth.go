@@ -330,7 +330,7 @@ func createUserHandler(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid email or password")
 	}
 
-	if req.Role == "" {
+	if req.Role != "user" && req.Role != "tenant_admin" {
 		req.Role = "user"
 	}
 

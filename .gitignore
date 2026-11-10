@@ -26,6 +26,13 @@ go.work.sum
 
 # env file
 .env
+*.env
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+backend/appointments.db
 
 # Editor/IDE
 # .idea/

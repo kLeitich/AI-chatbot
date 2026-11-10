@@ -13,31 +13,34 @@ import (
 	"time"
 )
 
-// QueryGroq sends a chat completion request to Groq API
-func QueryGroq(model, prompt string) (string, error) {
+// QueryGroqWithSystem sends a chat completion request to Groq API with system/user role separation
+func QueryGroqWithSystem(model, systemPrompt, userMessage string) (string, error) {
 	apiKey := os.Getenv("GROQ_API_KEY")
 	if apiKey == "" {
 		return "", errors.New("GROQ_API_KEY not set")
 	}
 
 	if model == "" {
-		// Default to a current Groq model (configurable via GROQ_MODEL env var)
 		model = os.Getenv("GROQ_MODEL")
 		if model == "" {
-			model = "llama-3.3-70b-versatile" // Updated to current model
+			model = "llama-3.3-70b-versatile"
 		}
 	}
 
+	messages := []map[string]string{}
+	if systemPrompt != "" {
+		messages = append(messages, map[string]string{"role": "system", "content": systemPrompt})
+	}
+	messages = append(messages, map[string]string{"role": "user", "content": userMessage})
+
 	payload := map[string]interface{}{
 		"model":                 model,
-		"messages":              []map[string]string{{"role": "user", "content": prompt}},
-		"temperature":           0.8,
+		"messages":              messages,
+		"temperature":           0.5,
 		"max_completion_tokens": 512,
 		"top_p":                 1,
 		"stream":                false,
 	}
-	// Only add reasoning_effort for models that support it (like llama-3.2-11b-vision-preview)
-	// For most models, this parameter is not needed
 
 	body, _ := json.Marshal(payload)
 
@@ -82,6 +85,11 @@ func QueryGroq(model, prompt string) (string, error) {
 	}
 
 	return strings.TrimSpace(result.Choices[0].Message.Content), nil
+}
+
+// QueryGroq sends a chat completion request to Groq API
+func QueryGroq(model, prompt string) (string, error) {
+	return QueryGroqWithSystem(model, "", prompt)
 }
 
 // AskForAppointmentFromMessage processes natural input and extracts intent
@@ -226,13 +234,17 @@ Check the "You ALREADY have" section - NEVER ask for anything listed there.
 		contextStr += fmt.Sprintf("Previous user message: %s. ", conv.LastUserMessage)
 	}
 
-	fullPrompt := systemPrompt
-	if contextStr != "" {
-		fullPrompt += "\n\n" + contextStr
+	// Enforce maximum length to prevent token exhaustion / prompt injection attacks
+	if len(userMessage) > 1000 {
+		userMessage = userMessage[:1000]
 	}
-	fullPrompt += "\n\nCurrent user message: " + userMessage
 
-	raw, err := QueryGroq(model, fullPrompt)
+	fullSystemPrompt := systemPrompt
+	if contextStr != "" {
+		fullSystemPrompt += "\n\n" + contextStr
+	}
+
+	raw, err := QueryGroqWithSystem(model, fullSystemPrompt, userMessage)
 	if err != nil {
 		return Appointment{}, "Sorry, I couldn’t reach the Groq API.", err
 	}
@@ -659,9 +671,7 @@ Current conversation state:
 		return "NOT PROVIDED YET"
 	}() + `
 
-User just said: ` + message
-
-	resp, err := QueryGroq(model, prompt)
+	resp, err := QueryGroqWithSystem(model, prompt, message)
 	if err != nil {
 		return "", err
 	}

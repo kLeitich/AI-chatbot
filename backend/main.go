@@ -12,6 +12,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 )
 
 // loadEnvFile loads environment variables from .env file if it exists
@@ -54,7 +55,36 @@ func main() {
 	// Ensure platform admin exists for platform-level management
 	_ = ensurePlatformAdmin(getEnv("DEFAULT_PLATFORM_ADMIN_EMAIL", "platform@example.com"), getEnv("DEFAULT_PLATFORM_ADMIN_PASSWORD", "platform123"))
 
+	// Security check for JWT secret
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" || jwtSecret == "supersecret" {
+		log.Println("[SECURITY WARNING] JWT_SECRET is unset or using default 'supersecret'. For production, set a strong, random secret!")
+	}
+
 	app := fiber.New()
+
+	// Rate limiters to prevent brute-force attacks and LLM quota exhaustion
+	authLimiter := limiter.New(limiter.Config{
+		Max:        10,
+		Expiration: 1 * time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP()
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return fiber.NewError(fiber.StatusTooManyRequests, "Too many requests. Please wait a minute.")
+		},
+	})
+
+	chatLimiter := limiter.New(limiter.Config{
+		Max:        30,
+		Expiration: 1 * time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP()
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return fiber.NewError(fiber.StatusTooManyRequests, "Chat rate limit reached. Please wait a moment before sending more messages.")
+		},
+	})
 
 	// ✅ CORS Configuration (works for both local and production)
 	// Default to localhost for local development, use env var for production
@@ -80,9 +110,9 @@ func main() {
 		return c.JSON(fiber.Map{"status": "ok", "time": time.Now()})
 	})
 
-	// Global auth endpoints
-	app.Post("/auth/register", companyRegisterHandler)
-	app.Post("/auth/platform/login", platformLoginHandler)
+	// Global auth endpoints (rate limited)
+	app.Post("/auth/register", authLimiter, companyRegisterHandler)
+	app.Post("/auth/platform/login", authLimiter, platformLoginHandler)
 	app.Post("/auth/change-password", jwtMiddleware, changePasswordHandler)
 
 	// Platform admin endpoints
@@ -94,15 +124,16 @@ func main() {
 	// Tenant-scoped API under /t/:tenant/...
 	tenant := app.Group("/t/:tenant")
 
-	tenant.Post("/chat", chatHandler)
-	tenant.Post("/register", registerHandler)
-	tenant.Post("/login", loginHandler)
+	tenant.Post("/chat", chatLimiter, chatHandler)
+	tenant.Post("/register", authLimiter, registerHandler)
+	tenant.Post("/login", authLimiter, loginHandler)
 	tenant.Post("/change-password", jwtMiddleware, changePasswordHandler)
 	tenant.Get("/doctors", listDoctors)
 	tenant.Get("/reasons", listReasons)
 	tenant.Get("/availability", getAvailability)
 
-	admin := tenant.Group("/admin", jwtMiddleware)
+	// Admin endpoints require tenant_admin (or platform_admin) role and matching tenant
+	admin := tenant.Group("/admin", jwtMiddleware, tenantAdminMiddleware)
 	admin.Get("/appointments", listAppointments)
 	admin.Post("/appointments", createAppointment)
 	admin.Put("/appointments/:id", updateAppointment)
