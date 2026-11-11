@@ -204,7 +204,7 @@ func tryLocalParse(message string) (Appointment, bool) {
 
 	// Date
 	var dateStr string
-	now := time.Now()
+	now := nowInAppLocation()
 	if tomorrowRe.MatchString(msg) {
 		dateStr = now.Add(24 * time.Hour).Format("2006-01-02")
 	} else if todayRe.MatchString(msg) {
@@ -217,11 +217,12 @@ func tryLocalParse(message string) (Appointment, bool) {
 		monName := strings.ToLower(monthMatch[1])
 		mon := monthNameToNumber(monName)
 		year := now.Year()
+		loc := getAppLocation()
 		// If month has passed this year and no explicit year, assume next year
-		cand := time.Date(year, time.Month(mon), day, 0, 0, 0, 0, time.Local)
-		if cand.Before(time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)) {
+		cand := time.Date(year, time.Month(mon), day, 0, 0, 0, 0, loc)
+		if cand.Before(time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)) {
 			year++
-			cand = time.Date(year, time.Month(mon), day, 0, 0, 0, 0, time.Local)
+			cand = time.Date(year, time.Month(mon), day, 0, 0, 0, 0, loc)
 		}
 		dateStr = cand.Format("2006-01-02")
 	}
@@ -290,7 +291,7 @@ func monthNameToNumber(m string) int {
 	case "dec":
 		return 12
 	}
-	return int(time.Now().Month())
+	return int(nowInAppLocation().Month())
 }
 
 func formatTwo(n int) string {
