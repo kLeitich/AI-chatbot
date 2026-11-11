@@ -46,9 +46,14 @@ func loadEnvFile() {
 func main() {
 	loadEnvFile()
 
-	appEnv := getEnv("APP_ENV", "development")
+	rawAppEnv := os.Getenv("APP_ENV")
+	appEnv, envErr := normalizeAndValidateAppEnv(rawAppEnv)
+	if envErr != nil {
+		log.Fatalf("[FATAL CONFIG] %v", envErr)
+	}
+
 	jwtSecret := os.Getenv("JWT_SECRET")
-	if err := validateConfig(appEnv, jwtSecret); err != nil {
+	if err := validateConfig(rawAppEnv, jwtSecret); err != nil {
 		log.Fatalf("[FATAL CONFIG] %v", err)
 	}
 

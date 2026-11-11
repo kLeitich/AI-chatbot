@@ -33,6 +33,44 @@ func TestValidateConfig(t *testing.T) {
 			wantErr:   false,
 		},
 
+		// Unset APP_ENV fails closed to production
+		{
+			name:      "Unset APP_ENV fails closed and rejects empty secret",
+			appEnv:    "",
+			jwtSecret: "",
+			wantErr:   true,
+			errSubstr: "must not be empty",
+		},
+		{
+			name:      "Unset APP_ENV fails closed and rejects weak secret",
+			appEnv:    "",
+			jwtSecret: "weak-secret",
+			wantErr:   true,
+			errSubstr: "at least 32 characters",
+		},
+		{
+			name:      "Unset APP_ENV fails closed and accepts valid 32+ char secret",
+			appEnv:    "",
+			jwtSecret: "v3ry_str0ng_pr0duct10n_jwt_s3cr3t_k3y_999!",
+			wantErr:   false,
+		},
+
+		// Invalid APP_ENV is rejected
+		{
+			name:      "Invalid APP_ENV is rejected",
+			appEnv:    "invalid_env",
+			jwtSecret: "v3ry_str0ng_pr0duct10n_jwt_s3cr3t_k3y_999!",
+			wantErr:   true,
+			errSubstr: "invalid APP_ENV",
+		},
+		{
+			name:      "Arbitrary APP_ENV like 'test' is rejected",
+			appEnv:    "test",
+			jwtSecret: "v3ry_str0ng_pr0duct10n_jwt_s3cr3t_k3y_999!",
+			wantErr:   true,
+			errSubstr: "invalid APP_ENV",
+		},
+
 		// Production environment strictly enforces non-empty, >=32 length, non-default
 		{
 			name:      "Prod rejects empty secret",
@@ -66,6 +104,13 @@ func TestValidateConfig(t *testing.T) {
 			name:      "Prod rejects known 32-char default numeric secret",
 			appEnv:    "production",
 			jwtSecret: "12345678901234567890123456789012",
+			wantErr:   true,
+			errSubstr: "insecure known default",
+		},
+		{
+			name:      "Prod rejects compose dev default key",
+			appEnv:    "production",
+			jwtSecret: "your-development-only-jwt-secret-key-32-chars!",
 			wantErr:   true,
 			errSubstr: "insecure known default",
 		},
@@ -109,4 +154,3 @@ func TestValidateConfig(t *testing.T) {
 		})
 	}
 }
-

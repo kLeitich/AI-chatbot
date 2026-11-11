@@ -1,0 +1,7 @@
+version: "3.9"
+services:
+  backend:
+    environment:
+      - APP_ENV=development
+      - JWT_SECRET=dev_local_jwt_secret_min_32_characters_for_testing_only!
+
