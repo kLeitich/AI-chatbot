@@ -99,9 +99,10 @@ type ChatResponse struct {
 // This is non-persistent and intended for short-lived conversational context.
 // For production, consider Redis or a DB table to persist context across replicas.
 type ConversationState struct {
-	LastUserMessage     string
-	LastAIMessage       string
-	Draft               Appointment
-	AwaitingConfirmation bool
-	UpdatedAt           time.Time
+	LastUserMessage       string
+	LastAIMessage         string
+	Draft                 Appointment
+	AwaitingConfirmation  bool
+	Expecting             string // "name" | "doctor" | "date" | "time" | "reason" | ""
+	UpdatedAt             time.Time
 }
