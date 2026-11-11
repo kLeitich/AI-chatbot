@@ -669,7 +669,7 @@ Current conversation state:
 			return conv.Draft.Reason
 		}
 		return "NOT PROVIDED YET"
-	}() + `
+	}()
 
 	resp, err := QueryGroqWithSystem(model, prompt, message)
 	if err != nil {

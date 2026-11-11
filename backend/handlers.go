@@ -43,6 +43,18 @@ func chatHandler(c *fiber.Ctx) error {
 	if len(messageText) > 1000 {
 		messageText = messageText[:1000]
 	}
+
+	// Emergency detector runs deterministic checks BEFORE any LLM call or state modification
+	if isEmergency, category := DetectEmergency(messageText); isEmergency {
+		LogEmergencyDetected(tenantSlug, sessionID, category)
+		// Clear session state and do not save draft
+		setConversation(convKey, ConversationState{})
+		return c.JSON(ChatResponse{
+			Reply:     EmergencyResponse(tenant, category),
+			SessionID: sessionID,
+		})
+	}
+
 	lowerMessage := strings.ToLower(messageText)
 	var reply string
 	var err error
@@ -90,6 +102,10 @@ func chatHandler(c *fiber.Ctx) error {
 	ap, reply, err := AskForAppointmentFromMessage("", messageText, conv)
 	if err != nil {
 		log.Printf("[Chat Error] %v", err)
+		return c.JSON(ChatResponse{
+			Reply:     "I'm sorry, I am having trouble processing your message right now. Please try again or contact the clinic directly.",
+			SessionID: sessionID,
+		})
 	}
 
 	// Update conversation state with partial information
