@@ -237,3 +237,4 @@ func TestChatValidateAtConfirmTime(t *testing.T) {
 		t.Errorf("Expected AwaitingConfirmation to be false, got true")
 	}
 }
+
