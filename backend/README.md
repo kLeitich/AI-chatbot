@@ -16,13 +16,15 @@ The backend automatically loads environment variables from `.env` file if it exi
 
 | Variable | Default | Description |
 |---|---|---|
+| `APP_ENV` | `development` | Environment mode (`development` or `production`) |
 | `PORT` | 8080 | Server port |
-| `JWT_SECRET` | supersecret | Secret for JWT token signing |
+| `JWT_SECRET` | Required in prod (min 32 chars) | Secret for JWT token signing (refuses to start with weak/empty secret in prod) |
+| `TRUST_PROXY` | `false` | Set to `true` when behind a reverse proxy (e.g. Render) to enable accurate client IP rate limiting |
 | `GROQ_API_KEY` | **required** | Groq API key ([get one here](https://console.groq.com/)) |
-| `GROQ_MODEL` | llama-3.3-70b-versatile | Groq model to use |
-| `SQLITE_PATH` | appointments.db | SQLite database file path |
-| `DEFAULT_ADMIN_EMAIL` | admin@example.com | Default admin email |
-| `DEFAULT_ADMIN_PASSWORD` | admin123 | Default admin password |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq model to use |
+| `SQLITE_PATH` | `appointments.db` | SQLite database file path |
+| `DEFAULT_ADMIN_EMAIL` | `admin@example.com` (dev only) | Optional seed admin email |
+| `DEFAULT_ADMIN_PASSWORD` | `admin123` (dev only) | Optional seed admin password |
 
 ## Features
 

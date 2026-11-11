@@ -1,9 +1,6 @@
 package main
 
 import (
-	"log"
-	"os"
-
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -14,16 +11,15 @@ func jwtMiddleware(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "missing token")
 	}
 	tokStr := auth[7:]
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		secret = "supersecret"
-		log.Println("[security warning] JWT_SECRET is not set; using insecure default fallback.")
+	secret := getJWTSecret()
+	if len(secret) == 0 {
+		return fiber.NewError(fiber.StatusInternalServerError, "server configuration error: JWT secret not initialized")
 	}
 	tok, err := jwt.Parse(tokStr, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fiber.NewError(fiber.StatusUnauthorized, "unexpected signing method")
 		}
-		return []byte(secret), nil
+		return secret, nil
 	})
 	if err != nil || !tok.Valid {
 		return fiber.NewError(fiber.StatusUnauthorized, "invalid token")

@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"net/mail"
-	"os"
 	"strings"
 	"time"
 
@@ -48,9 +47,9 @@ func checkPasswordHash(password, hash string) bool {
 }
 
 func createJWTToken(userID uint, email string, tenantID uint, role string) (string, error) {
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		secret = "supersecret"
+	secret := getJWTSecret()
+	if len(secret) == 0 {
+		return "", errors.New("JWT secret not configured")
 	}
 	claims := jwt.MapClaims{
 		"sub":      userID,
@@ -60,7 +59,7 @@ func createJWTToken(userID uint, email string, tenantID uint, role string) (stri
 		"exp":      time.Now().Add(24 * time.Hour).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(secret))
+	return token.SignedString(secret)
 }
 
 func registerHandler(c *fiber.Ctx) error {

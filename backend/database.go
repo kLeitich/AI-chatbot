@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"strings"
 	"time"
 
 	"gorm.io/driver/sqlite"
@@ -12,10 +13,8 @@ var db *gorm.DB
 
 const defaultTenantSlug = "default"
 
-// initDatabase connects to SQLite, runs migrations and seeds a default tenant
-// plus some sample appointments for that tenant. It returns the default
-// tenant's ID so callers can attach seeded users (like the default admin).
-func initDatabase(dbPath string) uint {
+// initDatabase connects to SQLite, runs migrations, and conditionally seeds data in development
+func initDatabase(dbPath string, appEnv string) uint {
 	var err error
 	db, err = gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	if err != nil {
@@ -26,11 +25,21 @@ func initDatabase(dbPath string) uint {
 		log.Fatalf("failed to migrate database: %v", err)
 	}
 
-	defaultTenantID := ensureDefaultTenant()
-	// Backfill any legacy rows (from before multitenancy) to the default tenant.
-	backfillTenantIDs(defaultTenantID)
-	seedSampleData(defaultTenantID)
-	return defaultTenantID
+	if strings.EqualFold(appEnv, "development") {
+		defaultTenantID := ensureDefaultTenant()
+		// Backfill any legacy rows (from before multitenancy) to the default tenant.
+		backfillTenantIDs(defaultTenantID)
+		seedSampleData(defaultTenantID)
+		return defaultTenantID
+	}
+
+	// In non-development, do not auto-seed sample appointments or default tenant
+	var t Tenant
+	if err := db.Where("slug = ?", defaultTenantSlug).First(&t).Error; err == nil {
+		backfillTenantIDs(t.ID)
+		return t.ID
+	}
+	return 0
 }
 
 // ensureDefaultTenant creates (or loads) the default tenant used for local dev.

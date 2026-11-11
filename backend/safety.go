@@ -219,3 +219,4 @@ func LogEmergencyDetected(tenantSlug, sessionID string, category EmergencyCatego
 	log.Printf("[EMERGENCY_DETECTED] tenant=%s session_id=%s category=%s timestamp=%s",
 		tenantSlug, sessionID, string(category), time.Now().UTC().Format(time.RFC3339))
 }
+

@@ -6,7 +6,9 @@ services:
       - "8080:8080"
     environment:
       - PORT=8080
-      - JWT_SECRET=${JWT_SECRET:-dev_insecure_jwt_secret_change_in_production}
+      - APP_ENV=${APP_ENV:-development}
+      - JWT_SECRET=${JWT_SECRET:-your-development-only-jwt-secret-key-32-chars!}
+      - TRUST_PROXY=${TRUST_PROXY:-false}
       - GROQ_API_KEY=${GROQ_API_KEY}
       - GROQ_MODEL=${GROQ_MODEL:-llama-3.3-70b-versatile}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
