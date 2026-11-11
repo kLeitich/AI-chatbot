@@ -33,11 +33,16 @@ go.work.sum
 
 # SQLite databases
 *.db
+*.db-wal
+*.db-shm
+*.db.bak.*
 *.db.*
 *.sqlite
 *.sqlite3
 *.bak
 backend/appointments.db
+backend/appointments.db-wal
+backend/appointments.db-shm
 
 # Editor/IDE
 # .idea/
