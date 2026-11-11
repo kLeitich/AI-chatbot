@@ -1,15 +1,26 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"sync"
 	"testing"
+
+	"github.com/gofiber/fiber/v2"
 )
 
 func TestSessionIDGenerationAndValidation(t *testing.T) {
 	// 1. Fresh generation generates valid 128-bit hex IDs (32 hex characters)
 	generated := make(map[string]bool)
 	for i := 0; i < 100; i++ {
-		sid := generateSessionID()
+		sid, err := generateSessionID()
+		if err != nil {
+			t.Fatalf("Unexpected error generating session ID: %v", err)
+		}
 		if len(sid) != 32 {
 			t.Fatalf("Expected 32 hex chars for 128-bit session ID, got length %d (%s)", len(sid), sid)
 		}
@@ -129,5 +140,52 @@ func TestSessionLockSerialization(t *testing.T) {
 
 	if counter != numWorkers {
 		t.Fatalf("Race detected in acquireSessionLock: expected counter = %d, got %d", numWorkers, counter)
+	}
+}
+
+type failingRandReader struct{}
+
+func (f *failingRandReader) Read(p []byte) (n int, err error) {
+	return 0, errors.New("simulated crypto/rand failure")
+}
+
+func TestGenerateSessionIDFailurePath(t *testing.T) {
+	// 1. Mock randReader to fail
+	origReader := randReader
+	randReader = &failingRandReader{}
+	defer func() {
+		randReader = origReader
+	}()
+
+	sid, err := generateSessionID()
+	if err == nil {
+		t.Fatalf("Expected generateSessionID to fail when entropy source fails, got sid: %q", sid)
+	}
+	if sid != "" {
+		t.Fatalf("Expected empty sid on failure, got: %q", sid)
+	}
+
+	// 2. Test chatHandler returns 500 Internal Server Error when session ID generation fails
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_session_fail.db")
+	_ = initDatabase(dbPath, "development")
+
+	app := fiber.New()
+	app.Post("/t/:tenant/chat", chatHandler)
+
+	reqBody, _ := json.Marshal(ChatRequest{
+		Message:   "hi",
+		SessionID: "", // triggers session ID generation
+	})
+	req := httptest.NewRequest(http.MethodPost, "/t/default/chat", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("Expected HTTP 500 Internal Server Error when session ID generation fails, got: %d", resp.StatusCode)
 	}
 }

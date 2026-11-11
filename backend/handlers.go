@@ -29,7 +29,12 @@ func chatHandler(c *fiber.Ctx) error {
 	// Validate session ID or generate a cryptographically secure 128-bit ID
 	sessionID := strings.TrimSpace(req.SessionID)
 	if sessionID == "" || !isValidSessionID(sessionID) {
-		sessionID = generateSessionID()
+		var err error
+		sessionID, err = generateSessionID()
+		if err != nil {
+			log.Printf("[Session Error] Failed to generate secure session ID: %v", err)
+			return fiber.NewError(fiber.StatusInternalServerError, "failed to generate secure session ID")
+		}
 	}
 
 	convKey := fmt.Sprintf("%s:%s", tenantSlug, sessionID)

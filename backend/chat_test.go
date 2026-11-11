@@ -25,7 +25,7 @@ func setupTestApp(t *testing.T) (*fiber.App, string) {
 	app := fiber.New()
 	app.Post("/t/:tenant/chat", chatHandler)
 
-	sessionID := generateSessionID()
+	sessionID, _ := generateSessionID()
 	return app, sessionID
 }
 
