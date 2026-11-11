@@ -34,14 +34,13 @@ export default function Chatbot({ tenant = 'default' }) {
   const [sessionId, setSessionId] = useState('')
   const bottomRef = useRef(null)
 
-  // Initialize sessionId on client only
+  // Initialize sessionId from localStorage if previously established
   useEffect(() => {
     if (typeof window === 'undefined') return
-    const k = 'chat_session_id'
-    let v = localStorage.getItem(k)
-    if (!v) { v = uuid(); localStorage.setItem(k, v) }
-    setSessionId(v)
-  }, [])
+    const k = 'chat_session_id_' + tenant
+    const v = localStorage.getItem(k)
+    if (v) setSessionId(v)
+  }, [tenant])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading])
 
@@ -55,7 +54,11 @@ export default function Chatbot({ tenant = 'default' }) {
       const payload = { message: userText }
       if (sessionId) payload.session_id = sessionId
       const res = await api.post(`/t/${tenant}/chat`, payload)
-      const { message, reply, appointment } = res.data || {}
+      const { message, reply, appointment, session_id } = res.data || {}
+      if (session_id) {
+        setSessionId(session_id)
+        localStorage.setItem('chat_session_id_' + tenant, session_id)
+      }
       const aiText = reply || message || "Hmm, I didn’t catch that."
       setMessages((prev) => [...prev, { role: 'ai', text: aiText }])
       if (appointment) setToast('Appointment created!')

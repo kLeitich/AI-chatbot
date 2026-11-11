@@ -94,9 +94,11 @@ func QueryGroq(model, prompt string) (string, error) {
 
 // AskForAppointmentFromMessage processes natural input and extracts intent
 func AskForAppointmentFromMessage(model, userMessage string, conv ConversationState) (Appointment, string, error) {
+	todayInNairobi := nowInAppLocation().Format("2006-01-02 (Monday)")
 	systemPrompt := `
 You are a friendly and conversational assistant that helps patients book doctor appointments.
 Your goal is to collect: doctor, date, time, patient name, and reason for appointment.
+Today's date in Africa/Nairobi: ` + todayInNairobi + `. Use this as reference when resolving relative dates like "tomorrow", "next Monday", etc.
 
 IMPORTANT RULES:
 1. Extract information from the current message AND combine with any previous context provided
@@ -622,6 +624,7 @@ func AskConversationalReply(model, message string, conv ConversationState) (stri
 
 	prompt := `
 You are a warm, friendly assistant helping patients book appointments.
+Today's reference date in Africa/Nairobi: ` + nowInAppLocation().Format("2006-01-02") + `.
 
 ` + hasStr + missingStr + `
 
@@ -669,7 +672,7 @@ Current conversation state:
 			return conv.Draft.Reason
 		}
 		return "NOT PROVIDED YET"
-	}() + `
+	}()
 
 	resp, err := QueryGroqWithSystem(model, prompt, message)
 	if err != nil {

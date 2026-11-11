@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -50,10 +53,56 @@ func isNegative(message string) bool {
 // conversation memory store with safe concurrent access and TTL eviction
 const sessionTTL = 2 * time.Hour
 
+var sessionIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{16,64}$`)
+
+func isValidSessionID(sid string) bool {
+	return sessionIDRegex.MatchString(sid)
+}
+
+func generateSessionID() string {
+	b := make([]byte, 16) // 128-bit
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%016x%016x", time.Now().UnixNano(), time.Now().Unix())
+	}
+	return hex.EncodeToString(b)
+}
+
 var (
 	convMuRW sync.RWMutex
 	sessionM = map[string]ConversationState{}
+
+	sessionLocksMu sync.Mutex
+	sessionLocks   = map[string]*sessionLockEntry{}
 )
+
+type sessionLockEntry struct {
+	mu       sync.Mutex
+	refCount int
+}
+
+// acquireSessionLock serialises handling per convKey so read-modify-write cannot race
+func acquireSessionLock(convKey string) func() {
+	sessionLocksMu.Lock()
+	entry, exists := sessionLocks[convKey]
+	if !exists {
+		entry = &sessionLockEntry{}
+		sessionLocks[convKey] = entry
+	}
+	entry.refCount++
+	sessionLocksMu.Unlock()
+
+	entry.mu.Lock()
+
+	return func() {
+		entry.mu.Unlock()
+		sessionLocksMu.Lock()
+		entry.refCount--
+		if entry.refCount <= 0 {
+			delete(sessionLocks, convKey)
+		}
+		sessionLocksMu.Unlock()
+	}
+}
 
 func init() {
 	// Background worker to evict expired sessions and prevent memory leaks
@@ -155,7 +204,7 @@ func tryLocalParse(message string) (Appointment, bool) {
 
 	// Date
 	var dateStr string
-	now := time.Now()
+	now := nowInAppLocation()
 	if tomorrowRe.MatchString(msg) {
 		dateStr = now.Add(24 * time.Hour).Format("2006-01-02")
 	} else if todayRe.MatchString(msg) {
@@ -168,11 +217,12 @@ func tryLocalParse(message string) (Appointment, bool) {
 		monName := strings.ToLower(monthMatch[1])
 		mon := monthNameToNumber(monName)
 		year := now.Year()
+		loc := getAppLocation()
 		// If month has passed this year and no explicit year, assume next year
-		cand := time.Date(year, time.Month(mon), day, 0, 0, 0, 0, time.Local)
-		if cand.Before(time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)) {
+		cand := time.Date(year, time.Month(mon), day, 0, 0, 0, 0, loc)
+		if cand.Before(time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)) {
 			year++
-			cand = time.Date(year, time.Month(mon), day, 0, 0, 0, 0, time.Local)
+			cand = time.Date(year, time.Month(mon), day, 0, 0, 0, 0, loc)
 		}
 		dateStr = cand.Format("2006-01-02")
 	}
@@ -241,7 +291,7 @@ func monthNameToNumber(m string) int {
 	case "dec":
 		return 12
 	}
-	return int(time.Now().Month())
+	return int(nowInAppLocation().Month())
 }
 
 func formatTwo(n int) string {

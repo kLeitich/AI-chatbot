@@ -46,22 +46,41 @@ func loadEnvFile() {
 func main() {
 	loadEnvFile()
 
-	port := getEnv("PORT", "8080")
-	dbPath := getEnv("SQLITE_PATH", "appointments.db")
-	defaultTenantID := initDatabase(dbPath)
-
-	// Ensure default tenant admin exists
-	_ = ensureDefaultAdmin(defaultTenantID, getEnv("DEFAULT_ADMIN_EMAIL", "admin@example.com"), getEnv("DEFAULT_ADMIN_PASSWORD", "admin123"))
-	// Ensure platform admin exists for platform-level management
-	_ = ensurePlatformAdmin(getEnv("DEFAULT_PLATFORM_ADMIN_EMAIL", "platform@example.com"), getEnv("DEFAULT_PLATFORM_ADMIN_PASSWORD", "platform123"))
-
-	// Security check for JWT secret
+	appEnv := getEnv("APP_ENV", "development")
 	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret == "" || jwtSecret == "supersecret" {
-		log.Println("[SECURITY WARNING] JWT_SECRET is unset or using default 'supersecret'. For production, set a strong, random secret!")
+	if err := validateConfig(appEnv, jwtSecret); err != nil {
+		log.Fatalf("[FATAL CONFIG] %v", err)
 	}
 
-	app := fiber.New()
+	port := getEnv("PORT", "8080")
+	dbPath := getEnv("SQLITE_PATH", "appointments.db")
+	defaultTenantID := initDatabase(dbPath, appEnv)
+
+	if strings.EqualFold(appEnv, "development") {
+		// Seed default tenant admin and platform admin only in development
+		defaultAdminEmail := getEnv("DEFAULT_ADMIN_EMAIL", "admin@example.com")
+		defaultAdminPass := getEnv("DEFAULT_ADMIN_PASSWORD", "admin123")
+		_ = ensureDefaultAdmin(defaultTenantID, defaultAdminEmail, defaultAdminPass)
+
+		defaultPlatformEmail := getEnv("DEFAULT_PLATFORM_ADMIN_EMAIL", "platform@example.com")
+		defaultPlatformPass := getEnv("DEFAULT_PLATFORM_ADMIN_PASSWORD", "platform123")
+		_ = ensurePlatformAdmin(defaultPlatformEmail, defaultPlatformPass)
+	} else {
+		// In other environments, create platform admin ONLY if explicitly set
+		platEmail := os.Getenv("DEFAULT_PLATFORM_ADMIN_EMAIL")
+		platPass := os.Getenv("DEFAULT_PLATFORM_ADMIN_PASSWORD")
+		if platEmail != "" && platPass != "" {
+			_ = ensurePlatformAdmin(platEmail, platPass)
+		}
+	}
+
+	fiberConfig := fiber.Config{}
+	if strings.EqualFold(getEnv("TRUST_PROXY", "false"), "true") {
+		fiberConfig.ProxyHeader = "X-Forwarded-For"
+		log.Println("[config] TRUST_PROXY=true: enabled X-Forwarded-For proxy header tracking")
+	}
+
+	app := fiber.New(fiberConfig)
 
 	// Rate limiters to prevent brute-force attacks and LLM quota exhaustion
 	authLimiter := limiter.New(limiter.Config{
