@@ -22,9 +22,23 @@ The backend automatically loads environment variables from `.env` file if it exi
 | `TRUST_PROXY` | `false` | Set to `true` when behind a reverse proxy (e.g. Render) to enable accurate client IP rate limiting |
 | `GROQ_API_KEY` | **required** | Groq API key ([get one here](https://console.groq.com/)) |
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq model to use |
-| `SQLITE_PATH` | `appointments.db` | SQLite database file path |
+| `SQLITE_PATH` | `appointments.db` | SQLite database file path (use `/data/appointments.db` in Docker/Render) |
 | `DEFAULT_ADMIN_EMAIL` | `admin@example.com` (dev only) | Optional seed admin email |
 | `DEFAULT_ADMIN_PASSWORD` | `admin123` (dev only) | Optional seed admin password |
+
+## Docker and Persistence
+
+The Docker image runs as an unprivileged user (`appuser`) and exposes a persistent volume mount point at `/data`.
+
+### Local Docker Compose
+When running via `docker-compose up`, data is stored in the named volume `backend_data` mounted at `/data`, persisting SQLite data across container recreation.
+
+### Render Persistent Disk
+When deploying the backend container to Render:
+1. Attach a persistent disk in the Render service settings (under **Disks** -> **Add a Disk**).
+2. Set Mount Path to `/data`.
+3. Set environment variable `SQLITE_PATH=/data/appointments.db`.
+4. Ensure `TRUST_PROXY=true` so rate limiting properly resolves client IPs from `X-Forwarded-For`.
 
 ## Features
 

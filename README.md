@@ -114,6 +114,13 @@ Access:
    - `JWT_SECRET` - A strong, random secret of at least 32 characters (the server exits fatally if empty or weak)
    - `SQLITE_PATH` - Path to database file (e.g. `/data/appointments.db` on persistent disk)
    - `DEFAULT_PLATFORM_ADMIN_EMAIL` & `DEFAULT_PLATFORM_ADMIN_PASSWORD` - (Optional) Initial platform admin credentials
+3. **Mount a Persistent Disk on Render**:
+   - In your Render Web Service dashboard, navigate to **Disks** -> **Add a Disk**.
+   - Set **Name**: `sqlite-data`.
+   - Set **Mount Path**: `/data`.
+   - Set **Size**: 1 GB (or as needed).
+   - Ensure `SQLITE_PATH` is set to `/data/appointments.db`.
+   - This ensures your SQLite database and WAL logs persist across service deploys and restarts. Without a persistent disk mount at `/data`, ephemeral container restarts will reset database data.
 
 ### Deploying to Vercel (Frontend)
 

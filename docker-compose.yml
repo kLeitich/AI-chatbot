@@ -12,8 +12,9 @@ services:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - GROQ_MODEL=${GROQ_MODEL:-llama-3.3-70b-versatile}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - SQLITE_PATH=/data/appointments.db
     volumes:
-      - ./backend/appointments.db:/app/appointments.db
+      - backend_data:/data
   frontend:
     build: ./frontend
     ports:
@@ -22,3 +23,6 @@ services:
       - backend
     environment:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+
+volumes:
+  backend_data:
