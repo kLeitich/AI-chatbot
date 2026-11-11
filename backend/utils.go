@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -50,10 +53,56 @@ func isNegative(message string) bool {
 // conversation memory store with safe concurrent access and TTL eviction
 const sessionTTL = 2 * time.Hour
 
+var sessionIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{16,64}$`)
+
+func isValidSessionID(sid string) bool {
+	return sessionIDRegex.MatchString(sid)
+}
+
+func generateSessionID() string {
+	b := make([]byte, 16) // 128-bit
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%016x%016x", time.Now().UnixNano(), time.Now().Unix())
+	}
+	return hex.EncodeToString(b)
+}
+
 var (
 	convMuRW sync.RWMutex
 	sessionM = map[string]ConversationState{}
+
+	sessionLocksMu sync.Mutex
+	sessionLocks   = map[string]*sessionLockEntry{}
 )
+
+type sessionLockEntry struct {
+	mu       sync.Mutex
+	refCount int
+}
+
+// acquireSessionLock serialises handling per convKey so read-modify-write cannot race
+func acquireSessionLock(convKey string) func() {
+	sessionLocksMu.Lock()
+	entry, exists := sessionLocks[convKey]
+	if !exists {
+		entry = &sessionLockEntry{}
+		sessionLocks[convKey] = entry
+	}
+	entry.refCount++
+	sessionLocksMu.Unlock()
+
+	entry.mu.Lock()
+
+	return func() {
+		entry.mu.Unlock()
+		sessionLocksMu.Lock()
+		entry.refCount--
+		if entry.refCount <= 0 {
+			delete(sessionLocks, convKey)
+		}
+		sessionLocksMu.Unlock()
+	}
+}
 
 func init() {
 	// Background worker to evict expired sessions and prevent memory leaks

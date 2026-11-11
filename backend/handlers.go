@@ -25,14 +25,17 @@ func chatHandler(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "tenant not found")
 	}
 
-	// Use session ID or generate a default one for conversation tracking,
-	// but namespace by tenant so sessions are isolated per tenant.
-	sessionID := req.SessionID
-	if sessionID == "" {
-		sessionID = "default"
+	// Validate session ID or generate a cryptographically secure 128-bit ID
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" || !isValidSessionID(sessionID) {
+		sessionID = generateSessionID()
 	}
 
 	convKey := fmt.Sprintf("%s:%s", tenantSlug, sessionID)
+
+	// Serialise handling per convKey so read-modify-write cannot race
+	unlockSession := acquireSessionLock(convKey)
+	defer unlockSession()
 
 	// Get conversation history
 	conv := getConversation(convKey)
@@ -83,7 +86,7 @@ func chatHandler(c *fiber.Ctx) error {
 			reply = fmt.Sprintf("Great! Your appointment with %s on %s at %s for %s is confirmed, %s.",
 				finalApp.Doctor, finalApp.Date, finalApp.Time, finalApp.Reason, finalApp.PatientName)
 			setConversation(convKey, ConversationState{})
-			return c.JSON(ChatResponse{Message: reply, Appointment: &finalApp})
+			return c.JSON(ChatResponse{Message: reply, Appointment: &finalApp, SessionID: sessionID})
 		}
 
 		if isNegative(lowerMessage) && len(strings.Fields(lowerMessage)) <= 3 {
@@ -91,7 +94,7 @@ func chatHandler(c *fiber.Ctx) error {
 			conv.AwaitingConfirmation = false
 			conv.LastAIMessage = reply
 			setConversation(convKey, conv)
-			return c.JSON(fiber.Map{"reply": reply})
+			return c.JSON(ChatResponse{Reply: reply, SessionID: sessionID})
 		}
 
 		// If the user provides more details instead of a simple yes/no,
@@ -149,7 +152,7 @@ func chatHandler(c *fiber.Ctx) error {
 		if err == nil && len(slots) > 0 {
 			reply = fmt.Sprintf("I found these available times with %s on %s: %s. Which one works best for you?", conv.Draft.Doctor, conv.Draft.Date, strings.Join(slots, ", "))
 			setConversation(convKey, conv)
-			return c.JSON(fiber.Map{"reply": reply})
+			return c.JSON(ChatResponse{Reply: reply, SessionID: sessionID})
 		}
 	}
 
@@ -166,7 +169,7 @@ func chatHandler(c *fiber.Ctx) error {
 				conv.Draft.Doctor, conv.Draft.Date, conv.Draft.Time)
 			conv.LastAIMessage = reasonReply
 			setConversation(convKey, conv)
-			return c.JSON(fiber.Map{"reply": reasonReply})
+			return c.JSON(ChatResponse{Reply: reasonReply, SessionID: sessionID})
 		}
 
 		confirmationReply := fmt.Sprintf("I have your appointment with %s on %s at %s for %s. Does that look right? Please reply with yes to confirm or no to change.",
@@ -174,13 +177,13 @@ func chatHandler(c *fiber.Ctx) error {
 		conv.AwaitingConfirmation = true
 		conv.LastAIMessage = confirmationReply
 		setConversation(convKey, conv)
-		return c.JSON(fiber.Map{"reply": confirmationReply})
+		return c.JSON(ChatResponse{Reply: confirmationReply, SessionID: sessionID})
 	}
 
 	if strings.TrimSpace(reply) == "" {
 		reply = "Hi! I can help you book an appointment. Which doctor and date work for you?"
 	}
-	return c.JSON(fiber.Map{"reply": strings.TrimSpace(reply)})
+	return c.JSON(ChatResponse{Reply: strings.TrimSpace(reply), SessionID: sessionID})
 }
 
 func listAppointments(c *fiber.Ctx) error {
