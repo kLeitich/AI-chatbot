@@ -156,16 +156,9 @@ func setConversation(sessionID string, s ConversationState) {
 	sessionM[sessionID] = s
 }
 
-// tryLocalParse extracts simple date/time/doctor from free text.
-// Handles examples like:
-// - "book me for 11am on 30th october with doctor Mercy"
-// - "tomorrow at 14:30 with doctor Kim"
-// Returns (draft appointment, true) if confident.
-func tryLocalParse(message string) (Appointment, bool) {
+// extractTime extracts a valid 24-hour HH:MM time from free text
+func extractTime(message string) string {
 	msg := strings.ToLower(message)
-
-	// Time
-	hhmm := ""
 	candidates := []string{}
 
 	if matches := time24Re.FindAllStringSubmatch(msg, -1); len(matches) > 0 {
@@ -199,16 +192,24 @@ func tryLocalParse(message string) (Appointment, bool) {
 	}
 
 	if len(candidates) > 0 {
-		hhmm = candidates[len(candidates)-1]
+		return normalizeTime(candidates[len(candidates)-1])
+	}
+	return ""
+}
+
+// extractDate extracts a YYYY-MM-DD date from free text
+func extractDate(message string) string {
+	msg := strings.ToLower(message)
+	now := nowInAppLocation()
+
+	if d := dateRegex.FindString(strings.TrimSpace(message)); d != "" && isValidDate(d) {
+		return d
 	}
 
-	// Date
-	var dateStr string
-	now := nowInAppLocation()
 	if tomorrowRe.MatchString(msg) {
-		dateStr = now.Add(24 * time.Hour).Format("2006-01-02")
+		return now.Add(24 * time.Hour).Format("2006-01-02")
 	} else if todayRe.MatchString(msg) {
-		dateStr = now.Format("2006-01-02")
+		return now.Format("2006-01-02")
 	} else if monthNameRe.MatchString(msg) && ordinalDayRe.MatchString(msg) {
 		// Extract day and month
 		dayMatch := ordinalDayRe.FindStringSubmatch(msg)
@@ -224,8 +225,19 @@ func tryLocalParse(message string) (Appointment, bool) {
 			year++
 			cand = time.Date(year, time.Month(mon), day, 0, 0, 0, 0, loc)
 		}
-		dateStr = cand.Format("2006-01-02")
+		return cand.Format("2006-01-02")
 	}
+	return ""
+}
+
+// tryLocalParse extracts simple date/time/doctor from free text.
+// Handles examples like:
+// - "book me for 11am on 30th october with doctor Mercy"
+// - "tomorrow at 14:30 with doctor Kim"
+// Returns (draft appointment, true) if confident.
+func tryLocalParse(message string) (Appointment, bool) {
+	hhmm := extractTime(message)
+	dateStr := extractDate(message)
 
 	// Doctor
 	doctor := ""
@@ -240,6 +252,7 @@ func tryLocalParse(message string) (Appointment, bool) {
 	}
 
 	// Reason extraction (from patterns like "for Dentist", "for checkup", or standalone medical terms)
+	msg := strings.ToLower(message)
 	reason := ""
 	reasonPatterns := []*regexp.Regexp{
 		regexp.MustCompile(`(?i)\b(?:for|because of|reason is|need)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)\b`),
@@ -250,11 +263,6 @@ func tryLocalParse(message string) (Appointment, bool) {
 			reason = strings.TrimSpace(m[1])
 			break
 		}
-	}
-
-	// Normalize the time to ensure it's in HH:MM format
-	if hhmm != "" {
-		hhmm = normalizeTime(hhmm)
 	}
 
 	ap := Appointment{PatientName: patient, Doctor: doctor, Date: dateStr, Time: hhmm, Reason: reason, Status: "pending"}

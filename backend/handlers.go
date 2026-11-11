@@ -60,8 +60,29 @@ func chatHandler(c *fiber.Ctx) error {
 	}
 
 	lowerMessage := strings.ToLower(messageText)
-	var reply string
-	var err error
+	tenantDoctors := tenantDoctorNames(tenant.ID)
+
+	// respond helper saves LastUserMessage, LastAIMessage, Expecting, AwaitingConfirmation,
+	// persists state via setConversation, and returns a JSON ChatResponse with SessionID.
+	respond := func(replyMsg string, expecting string, awaitingConfirm bool, finalApp *Appointment) error {
+		conv.LastUserMessage = messageText
+		conv.LastAIMessage = replyMsg
+		conv.Expecting = expecting
+		conv.AwaitingConfirmation = awaitingConfirm
+		setConversation(convKey, conv)
+
+		if finalApp != nil {
+			return c.JSON(ChatResponse{
+				Message:     replyMsg,
+				Appointment: finalApp,
+				SessionID:   sessionID,
+			})
+		}
+		return c.JSON(ChatResponse{
+			Reply:     replyMsg,
+			SessionID: sessionID,
+		})
+	}
 
 	if conv.AwaitingConfirmation {
 		if isAffirmative(lowerMessage) {
@@ -80,6 +101,31 @@ func chatHandler(c *fiber.Ctx) error {
 				Status:      StatusPending,
 			}
 
+			// Validate at confirm time:
+			// Re-check date is not in the past, time is on grid, and slot is still free
+			slots, err := availableTimeSlots(tenant.ID, conv.Draft.Date, conv.Draft.Doctor)
+			slotAvailable := false
+			if err == nil {
+				for _, s := range slots {
+					if s == finalTime {
+						slotAvailable = true
+						break
+					}
+				}
+			}
+
+			if !slotAvailable {
+				altMsg := ""
+				if len(slots) > 0 {
+					altMsg = fmt.Sprintf(" Available times on %s with %s are: %s.", conv.Draft.Date, conv.Draft.Doctor, strings.Join(slots, ", "))
+				} else {
+					altMsg = fmt.Sprintf(" %s has no available slots on %s.", conv.Draft.Doctor, conv.Draft.Date)
+				}
+				reply := fmt.Sprintf("Sorry, that slot is no longer available.%s What time would you prefer instead?", altMsg)
+				conv.Draft.Time = ""
+				return respond(reply, "time", false, nil)
+			}
+
 			var alts []string
 			bErr := db.Transaction(func(tx *gorm.DB) error {
 				var err error
@@ -91,88 +137,92 @@ func chatHandler(c *fiber.Ctx) error {
 				if len(alts) > 0 {
 					altMsg = fmt.Sprintf(" Available times on %s with %s are: %s.", finalApp.Date, finalApp.Doctor, strings.Join(alts, ", "))
 				}
-				reply = fmt.Sprintf("Sorry, that slot is no longer available.%s What time would you prefer instead?", altMsg)
+				reply := fmt.Sprintf("Sorry, that slot is no longer available.%s What time would you prefer instead?", altMsg)
 				conv.Draft.Time = ""
-				conv.AwaitingConfirmation = false
-				conv.LastAIMessage = reply
-				setConversation(convKey, conv)
-				return c.JSON(ChatResponse{Reply: reply, SessionID: sessionID})
+				return respond(reply, "time", false, nil)
 			}
 
-			reply = fmt.Sprintf("Great! Your appointment with %s on %s at %s for %s is confirmed, %s.",
+			reply := fmt.Sprintf("Great! Your appointment with %s on %s at %s for %s is confirmed, %s.",
 				finalApp.Doctor, finalApp.Date, finalApp.Time, finalApp.Reason, finalApp.PatientName)
-			setConversation(convKey, ConversationState{})
+			// Clear conversation state on successful booking
+			conv = ConversationState{}
+			setConversation(convKey, conv)
 			return c.JSON(ChatResponse{Message: reply, Appointment: &finalApp, SessionID: sessionID})
 		}
 
 		if isNegative(lowerMessage) && len(strings.Fields(lowerMessage)) <= 3 {
-			reply = "No problem. What would you like to change?"
-			conv.AwaitingConfirmation = false
-			conv.LastAIMessage = reply
-			setConversation(convKey, conv)
-			return c.JSON(ChatResponse{Reply: reply, SessionID: sessionID})
+			reply := "No problem. What would you like to change?"
+			return respond(reply, "", false, nil)
 		}
 
-		// If the user provides more details instead of a simple yes/no,
-		// clear the confirmation flag and continue parsing.
+		// If user provides more details instead of yes/no, clear confirmation flag and continue
 		conv.AwaitingConfirmation = false
 	}
 
-	ap, reply, err := AskForAppointmentFromMessage("", messageText, conv)
-	if err != nil {
-		log.Printf("[Chat Error] %v", err)
-		return c.JSON(ChatResponse{
-			Reply:     "I'm sorry, I am having trouble processing your message right now. Please try again or contact the clinic directly.",
-			SessionID: sessionID,
-		})
-	}
-
-	// Update conversation state with partial information
-	if ap.Doctor != "" || ap.PatientName != "" || ap.Date != "" || ap.Time != "" || ap.Reason != "" {
-		conv.Draft.PatientName = choose(ap.PatientName, conv.Draft.PatientName)
-		conv.Draft.Doctor = choose(ap.Doctor, conv.Draft.Doctor)
-		conv.Draft.Date = choose(ap.Date, conv.Draft.Date)
-		conv.Draft.Time = choose(ap.Time, conv.Draft.Time)
-		conv.Draft.Reason = choose(ap.Reason, conv.Draft.Reason)
-		conv.LastUserMessage = req.Message
-		conv.LastAIMessage = reply
-		setConversation(convKey, conv)
-	}
-
-	// Check if the current response has information to update the conversation state
-	if strings.TrimSpace(ap.Reason) != "" {
-		conv.Draft.Reason = ap.Reason
-	}
-	if strings.TrimSpace(ap.PatientName) != "" {
-		conv.Draft.PatientName = ap.PatientName
-	}
-	if strings.TrimSpace(ap.Doctor) != "" {
-		conv.Draft.Doctor = ap.Doctor
-	}
-	if strings.TrimSpace(ap.Date) != "" && isValidDate(ap.Date) {
-		conv.Draft.Date = ap.Date
-	}
-	if strings.TrimSpace(ap.Time) != "" {
-		// Normalize time before saving to ensure proper format
-		normalizedTime := normalizeTime(ap.Time)
-		if normalizedTime != "" && isValidTime(normalizedTime) {
-			conv.Draft.Time = normalizedTime
-			ap.Time = normalizedTime // Also update the appointment object
+	// 1. applyExpectedAnswer runs FIRST: if handled, return immediately
+	if conv.Expecting != "" {
+		if handled, expectedReply := applyExpectedAnswer(&conv, messageText, tenantDoctors); handled {
+			// Check if all required fields are now present
+			if conv.Draft.PatientName != "" && conv.Draft.Doctor != "" &&
+				isValidDate(conv.Draft.Date) && isValidTime(conv.Draft.Time) {
+				if conv.Draft.Reason == "" {
+					reasonQ := fmt.Sprintf("Perfect! I have all the details. What is the reason for your appointment with %s on %s at %s?",
+						conv.Draft.Doctor, conv.Draft.Date, conv.Draft.Time)
+					return respond(reasonQ, "reason", false, nil)
+				}
+				confirmQ := fmt.Sprintf("I have your appointment with %s on %s at %s for %s. Does that look right? Please reply with yes to confirm or no to change.",
+					conv.Draft.Doctor, conv.Draft.Date, conv.Draft.Time, conv.Draft.Reason)
+				return respond(confirmQ, "", true, nil)
+			}
+			return respond(expectedReply, conv.Expecting, false, nil)
 		}
 	}
-	setConversation(convKey, conv)
+
+	// 2. LLM path only runs if applyExpectedAnswer didn't handle the message
+	ap, _, err := AskForAppointmentFromMessage("", messageText, conv)
+	if err != nil {
+		log.Printf("[Chat Info] LLM fallback notice: %v", err)
+	}
+
+	// Any extracted doctor is validated against tenantDoctorNames; unknown doctors are dropped with the "couldn't find" reply
+	if ap.Doctor != "" {
+		if matchedDoc, ok := matchDoctor(ap.Doctor, tenantDoctors); ok {
+			conv.Draft.Doctor = matchedDoc
+		} else {
+			docList := strings.Join(tenantDoctors, ", ")
+			reply := fmt.Sprintf("I couldn't find a doctor called %s. Our doctors are: %s.", ap.Doctor, docList)
+			return respond(reply, "doctor", false, nil)
+		}
+	}
+
+	// Draft merge fills fields from the extracted appointment (valid dates/times only)
+	if ap.PatientName != "" && isValidPatientNameCandidate(ap.PatientName) {
+		conv.Draft.PatientName = formatPatientName(ap.PatientName)
+	}
+	if ap.Date != "" && isValidDate(ap.Date) {
+		conv.Draft.Date = ap.Date
+	}
+	if ap.Time != "" {
+		normalizedTime := normalizeTime(ap.Time)
+		if isValidTime(normalizedTime) {
+			conv.Draft.Time = normalizedTime
+		}
+	}
+	if ap.Reason != "" {
+		conv.Draft.Reason = strings.TrimSpace(ap.Reason)
+	}
 
 	// If the user provided doctor and date but not time, suggest available slots
 	if conv.Draft.Doctor != "" && conv.Draft.Date != "" && conv.Draft.Time == "" {
 		slots, err := availableTimeSlots(tenant.ID, conv.Draft.Date, conv.Draft.Doctor)
 		if err == nil && len(slots) > 0 {
-			reply = fmt.Sprintf("I found these available times with %s on %s: %s. Which one works best for you?", conv.Draft.Doctor, conv.Draft.Date, strings.Join(slots, ", "))
-			setConversation(convKey, conv)
-			return c.JSON(ChatResponse{Reply: reply, SessionID: sessionID})
+			reply := fmt.Sprintf("I found these available times with %s on %s: %s. Which one works best for you?",
+				conv.Draft.Doctor, conv.Draft.Date, strings.Join(slots, ", "))
+			return respond(reply, "time", false, nil)
 		}
 	}
 
-	// When a patient states a time directly in chat, validate it against availability before moving to the confirmation step
+	// When a patient states a time directly in chat, validate it against availability before moving to confirmation
 	if conv.Draft.Doctor != "" && isValidDate(conv.Draft.Date) && isValidTime(conv.Draft.Time) {
 		slots, err := availableTimeSlots(tenant.ID, conv.Draft.Date, conv.Draft.Doctor)
 		slotAvailable := false
@@ -193,11 +243,9 @@ func chatHandler(c *fiber.Ctx) error {
 			} else {
 				altMsg = fmt.Sprintf(" %s has no available slots on %s.", conv.Draft.Doctor, conv.Draft.Date)
 			}
-			reply = fmt.Sprintf("The time %s is not available.%s Which time works best for you?", conv.Draft.Time, altMsg)
+			reply := fmt.Sprintf("The time %s is not available.%s Which time works best for you?", conv.Draft.Time, altMsg)
 			conv.Draft.Time = ""
-			conv.LastAIMessage = reply
-			setConversation(convKey, conv)
-			return c.JSON(ChatResponse{Reply: reply, SessionID: sessionID})
+			return respond(reply, "time", false, nil)
 		}
 	}
 
@@ -208,27 +256,20 @@ func chatHandler(c *fiber.Ctx) error {
 		isValidTime(conv.Draft.Time)
 
 	if updatedHasAll {
-		finalReason := choose(ap.Reason, conv.Draft.Reason)
-		if strings.TrimSpace(finalReason) == "" {
+		if strings.TrimSpace(conv.Draft.Reason) == "" {
 			reasonReply := fmt.Sprintf("Perfect! I have all the details. What is the reason for your appointment with %s on %s at %s?",
 				conv.Draft.Doctor, conv.Draft.Date, conv.Draft.Time)
-			conv.LastAIMessage = reasonReply
-			setConversation(convKey, conv)
-			return c.JSON(ChatResponse{Reply: reasonReply, SessionID: sessionID})
+			return respond(reasonReply, "reason", false, nil)
 		}
 
 		confirmationReply := fmt.Sprintf("I have your appointment with %s on %s at %s for %s. Does that look right? Please reply with yes to confirm or no to change.",
-			conv.Draft.Doctor, conv.Draft.Date, conv.Draft.Time, finalReason)
-		conv.AwaitingConfirmation = true
-		conv.LastAIMessage = confirmationReply
-		setConversation(convKey, conv)
-		return c.JSON(ChatResponse{Reply: confirmationReply, SessionID: sessionID})
+			conv.Draft.Doctor, conv.Draft.Date, conv.Draft.Time, conv.Draft.Reason)
+		return respond(confirmationReply, "", true, nil)
 	}
 
-	if strings.TrimSpace(reply) == "" {
-		reply = "Hi! I can help you book an appointment. Which doctor and date work for you?"
-	}
-	return c.JSON(ChatResponse{Reply: strings.TrimSpace(reply), SessionID: sessionID})
+	// Slot questions come from nextSlotQuestion (Go), not the LLM
+	nextSlot, nextQ := nextSlotQuestion(conv.Draft, tenantDoctors)
+	return respond(nextQ, nextSlot, false, nil)
 }
 
 func listAppointments(c *fiber.Ctx) error {
