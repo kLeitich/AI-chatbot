@@ -57,11 +57,12 @@ var EmergencyPhrases = map[EmergencyCategory][]string{
 		"running out of breath", "choking for air", "lack of air", "short of breath",
 		"gasping", "breathlessness",
 		// Swahili & Sheng
-		"siwezi kupumua", "kupumua kwa shida", "nashindwa kupumua", "pumzi imekata",
+		"siwezi kupumua", "kupumua kwa shida", "anapumua kwa shida", "ninapumua kwa shida",
+		"nashindwa kupumua", "anashindwa kupumua", "pumzi imekata",
 		"pumzi shida", "kukosa pumzi", "pumzi ngumu", "kushindwa kupumua",
 		"shida ya kupumua", "pumzi inakosa", "pumzi kuisha", "pumzi inakata",
 		"pumzi imeisha", "siwezi pumua", "kupumua ngumu", "pumzi mbaya",
-		"siwezi ku breath", "siwezi kubreathe",
+		"pumua kwa shida", "siwezi ku breath", "siwezi kubreathe",
 	},
 	CategorySevereBleeding: {
 		// English
@@ -162,18 +163,19 @@ func DetectEmergency(rawText string) (bool, EmergencyCategory) {
 
 	padded := " " + norm + " "
 
-	// Priority: Self-harm first, then all acute medical conditions
+	// Priority: Self-harm and specific conditions (pregnancy bleeding, choking, poisoning) first,
+	// followed by acute organ-system emergencies.
 	categories := []EmergencyCategory{
 		CategorySelfHarm,
+		CategoryPregnancyBleeding,
+		CategoryChoking,
+		CategoryOverdosePoisoning,
+		CategoryStroke,
+		CategorySeizure,
 		CategoryChestPain,
 		CategoryDifficultyBreathing,
 		CategorySevereBleeding,
 		CategoryUnconsciousness,
-		CategorySeizure,
-		CategoryStroke,
-		CategoryChoking,
-		CategoryOverdosePoisoning,
-		CategoryPregnancyBleeding,
 	}
 
 	for _, cat := range categories {
