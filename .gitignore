@@ -30,8 +30,10 @@ go.work.sum
 
 # SQLite databases
 *.db
+*.db.*
 *.sqlite
 *.sqlite3
+*.bak
 backend/appointments.db
 
 # Editor/IDE

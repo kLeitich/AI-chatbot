@@ -43,14 +43,36 @@ type Appointment struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// Appointment status constants
+const (
+	StatusPending   = "pending"
+	StatusConfirmed = "confirmed"
+	StatusCancelled = "cancelled"
+	StatusCompleted = "completed"
+	StatusNoShow    = "no_show"
+)
+
+func isValidStatus(status string) bool {
+	switch status {
+	case StatusPending, StatusConfirmed, StatusCancelled, StatusCompleted, StatusNoShow:
+		return true
+	default:
+		return false
+	}
+}
+
 type Doctor struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	TenantID  uint      `gorm:"index" json:"tenant_id"`
-	Name      string    `gorm:"size:255;not null" json:"name"`
-	Specialty string    `gorm:"size:255" json:"specialty"`
-	Bio       string    `gorm:"size:500" json:"bio"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	TenantID    uint      `gorm:"index" json:"tenant_id"`
+	Name        string    `gorm:"size:255;not null" json:"name"`
+	Specialty   string    `gorm:"size:255" json:"specialty"`
+	Bio         string    `gorm:"size:500" json:"bio"`
+	WorkDays    string    `gorm:"size:100;default:'Mon,Tue,Wed,Thu,Fri,Sat'" json:"work_days"`
+	WorkStart   string    `gorm:"size:5;default:'09:00'" json:"work_start"`
+	WorkEnd     string    `gorm:"size:5;default:'17:00'" json:"work_end"`
+	SlotMinutes int       `gorm:"default:30" json:"slot_minutes"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type ReasonOption struct {

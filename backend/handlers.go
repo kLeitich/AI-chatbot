@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 func chatHandler(c *fiber.Ctx) error {
@@ -70,17 +71,32 @@ func chatHandler(c *fiber.Ctx) error {
 			}
 			finalTime := normalizeTime(conv.Draft.Time)
 			finalApp := Appointment{
+				TenantID:    tenant.ID,
 				PatientName: conv.Draft.PatientName,
 				Doctor:      conv.Draft.Doctor,
 				Date:        conv.Draft.Date,
 				Time:        finalTime,
 				Reason:      finalReason,
-				Status:      "pending",
+				Status:      StatusPending,
 			}
 
-			finalApp.TenantID = tenant.ID
-			if err := db.Create(&finalApp).Error; err != nil {
-				return fiber.NewError(fiber.StatusInternalServerError, "failed to create appointment")
+			var alts []string
+			bErr := db.Transaction(func(tx *gorm.DB) error {
+				var err error
+				alts, err = bookSlot(tx, tenant.ID, &finalApp)
+				return err
+			})
+			if bErr != nil {
+				altMsg := ""
+				if len(alts) > 0 {
+					altMsg = fmt.Sprintf(" Available times on %s with %s are: %s.", finalApp.Date, finalApp.Doctor, strings.Join(alts, ", "))
+				}
+				reply = fmt.Sprintf("Sorry, that slot is no longer available.%s What time would you prefer instead?", altMsg)
+				conv.Draft.Time = ""
+				conv.AwaitingConfirmation = false
+				conv.LastAIMessage = reply
+				setConversation(convKey, conv)
+				return c.JSON(ChatResponse{Reply: reply, SessionID: sessionID})
 			}
 
 			reply = fmt.Sprintf("Great! Your appointment with %s on %s at %s for %s is confirmed, %s.",
@@ -156,6 +172,35 @@ func chatHandler(c *fiber.Ctx) error {
 		}
 	}
 
+	// When a patient states a time directly in chat, validate it against availability before moving to the confirmation step
+	if conv.Draft.Doctor != "" && isValidDate(conv.Draft.Date) && isValidTime(conv.Draft.Time) {
+		slots, err := availableTimeSlots(tenant.ID, conv.Draft.Date, conv.Draft.Doctor)
+		slotAvailable := false
+		if err == nil {
+			for _, s := range slots {
+				if s == conv.Draft.Time {
+					slotAvailable = true
+					break
+				}
+			}
+		}
+		if !slotAvailable {
+			altMsg := ""
+			if err != nil {
+				altMsg = fmt.Sprintf(" (%v)", err)
+			} else if len(slots) > 0 {
+				altMsg = fmt.Sprintf(" Available times on %s with %s are: %s.", conv.Draft.Date, conv.Draft.Doctor, strings.Join(slots, ", "))
+			} else {
+				altMsg = fmt.Sprintf(" %s has no available slots on %s.", conv.Draft.Doctor, conv.Draft.Date)
+			}
+			reply = fmt.Sprintf("The time %s is not available.%s Which time works best for you?", conv.Draft.Time, altMsg)
+			conv.Draft.Time = ""
+			conv.LastAIMessage = reply
+			setConversation(convKey, conv)
+			return c.JSON(ChatResponse{Reply: reply, SessionID: sessionID})
+		}
+	}
+
 	// Check if we now have all required fields
 	updatedHasAll := conv.Draft.Doctor != "" &&
 		conv.Draft.PatientName != "" &&
@@ -213,14 +258,27 @@ func createAppointment(c *fiber.Ctx) error {
 	in.Doctor = strings.TrimSpace(in.Doctor)
 	in.Reason = strings.TrimSpace(in.Reason)
 	if in.Status == "" {
-		in.Status = "pending"
+		in.Status = StatusPending
+	}
+	if !isValidStatus(in.Status) {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid appointment status")
 	}
 	in.TenantID = tenantID
 	if in.PatientName == "" || in.Doctor == "" || !isValidDate(in.Date) || !isValidTime(in.Time) {
 		return fiber.NewError(fiber.StatusBadRequest, "patient, doctor, valid date and time required")
 	}
-	if err := db.Create(&in).Error; err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "failed to create")
+
+	var alts []string
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var bErr error
+		alts, bErr = bookSlot(tx, tenantID, &in)
+		return bErr
+	})
+	if err != nil {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error":        err.Error(),
+			"alternatives": alts,
+		})
 	}
 	return c.Status(fiber.StatusCreated).JSON(in)
 }
@@ -241,24 +299,53 @@ func updateAppointment(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
 	}
 
-	if in.Date != "" && !isValidDate(in.Date) {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid date")
-	}
-	if in.Time != "" && !isValidTime(in.Time) {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid time")
-	}
-
-	ap.PatientName = choose(in.PatientName, ap.PatientName)
-	ap.Doctor = choose(in.Doctor, ap.Doctor)
-	ap.Date = choose(in.Date, ap.Date)
-	ap.Time = choose(in.Time, ap.Time)
-	ap.Reason = choose(in.Reason, ap.Reason)
 	if in.Status != "" {
+		if !isValidStatus(in.Status) {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid appointment status")
+		}
 		ap.Status = in.Status
 	}
 
-	if err := db.Save(&ap).Error; err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "failed to update")
+	slotChanged := false
+	if in.Date != "" && in.Date != ap.Date {
+		if !isValidDate(in.Date) {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid date")
+		}
+		ap.Date = in.Date
+		slotChanged = true
+	}
+	if in.Time != "" && in.Time != ap.Time {
+		if !isValidTime(in.Time) {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid time")
+		}
+		ap.Time = in.Time
+		slotChanged = true
+	}
+	if in.Doctor != "" && in.Doctor != ap.Doctor {
+		ap.Doctor = in.Doctor
+		slotChanged = true
+	}
+
+	ap.PatientName = choose(in.PatientName, ap.PatientName)
+	ap.Reason = choose(in.Reason, ap.Reason)
+
+	if slotChanged {
+		var alts []string
+		err := db.Transaction(func(tx *gorm.DB) error {
+			var bErr error
+			alts, bErr = bookSlot(tx, tenantID, &ap)
+			return bErr
+		})
+		if err != nil {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error":        err.Error(),
+				"alternatives": alts,
+			})
+		}
+	} else {
+		if err := db.Save(&ap).Error; err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "failed to update")
+		}
 	}
 	return c.JSON(ap)
 }
@@ -277,9 +364,13 @@ func deleteAppointment(c *fiber.Ctx) error {
 }
 
 type createDoctorRequest struct {
-	Name      string `json:"name"`
-	Specialty string `json:"specialty"`
-	Bio       string `json:"bio"`
+	Name        string `json:"name"`
+	Specialty   string `json:"specialty"`
+	Bio         string `json:"bio"`
+	WorkDays    string `json:"work_days"`
+	WorkStart   string `json:"work_start"`
+	WorkEnd     string `json:"work_end"`
+	SlotMinutes int    `json:"slot_minutes"`
 }
 
 type createReasonRequest struct {
@@ -318,11 +409,32 @@ func createDoctor(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "doctor name is required")
 	}
 
+	workDays := strings.TrimSpace(req.WorkDays)
+	if workDays == "" {
+		workDays = "Mon,Tue,Wed,Thu,Fri,Sat"
+	}
+	workStart := strings.TrimSpace(req.WorkStart)
+	if workStart == "" {
+		workStart = "09:00"
+	}
+	workEnd := strings.TrimSpace(req.WorkEnd)
+	if workEnd == "" {
+		workEnd = "17:00"
+	}
+	slotMins := req.SlotMinutes
+	if slotMins <= 0 {
+		slotMins = 30
+	}
+
 	doctor := Doctor{
-		TenantID:  tenantID,
-		Name:      strings.TrimSpace(req.Name),
-		Specialty: strings.TrimSpace(req.Specialty),
-		Bio:       strings.TrimSpace(req.Bio),
+		TenantID:    tenantID,
+		Name:        strings.TrimSpace(req.Name),
+		Specialty:   strings.TrimSpace(req.Specialty),
+		Bio:         strings.TrimSpace(req.Bio),
+		WorkDays:    workDays,
+		WorkStart:   workStart,
+		WorkEnd:     workEnd,
+		SlotMinutes: slotMins,
 	}
 
 	if err := db.Create(&doctor).Error; err != nil {
@@ -394,12 +506,15 @@ func getAvailability(c *fiber.Ctx) error {
 	date := strings.TrimSpace(c.Query("date"))
 	doctorName := strings.TrimSpace(c.Query("doctor"))
 	if date == "" || !isValidDate(date) {
-		return fiber.NewError(fiber.StatusBadRequest, "valid date is required")
+		return fiber.NewError(fiber.StatusBadRequest, "valid date is required (YYYY-MM-DD)")
+	}
+	if doctorName == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "doctor parameter is required to check availability")
 	}
 
 	slots, err := availableTimeSlots(tenant.ID, date, doctorName)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "failed to compute availability")
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 
 	return c.JSON(availabilityResponse{
@@ -407,36 +522,6 @@ func getAvailability(c *fiber.Ctx) error {
 		Doctor:         doctorName,
 		AvailableTimes: slots,
 	})
-}
-
-func availableTimeSlots(tenantID uint, date string, doctorName string) ([]string, error) {
-	query := db.Where("tenant_id = ? AND date = ?", tenantID, date)
-	if doctorName != "" {
-		query = query.Where("doctor = ?", doctorName)
-	}
-
-	var booked []Appointment
-	if err := query.Find(&booked).Error; err != nil {
-		return nil, err
-	}
-
-	taken := map[string]bool{}
-	for _, ap := range booked {
-		if isValidTime(ap.Time) {
-			taken[ap.Time] = true
-		}
-	}
-
-	slots := []string{}
-	for hour := 9; hour < 17; hour++ {
-		for minute := 0; minute < 60; minute += 30 {
-			timeStr := formatTwo(hour) + ":" + formatTwo(minute)
-			if !taken[timeStr] {
-				slots = append(slots, timeStr)
-			}
-		}
-	}
-	return slots, nil
 }
 
 func listCompanies(c *fiber.Ctx) error {
