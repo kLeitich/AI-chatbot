@@ -14,6 +14,22 @@ const AVAILABLE_PERMISSIONS = [
   'settings.manage',
 ]
 
+const PRESET_MAP = {
+  viewer: ['appointments.view', 'doctors.view'],
+  receptionist: ['appointments.view', 'appointments.create', 'appointments.edit', 'appointments.cancel', 'doctors.view'],
+  manager: [
+    'appointments.view',
+    'appointments.create',
+    'appointments.edit',
+    'appointments.cancel',
+    'appointments.delete',
+    'doctors.view',
+    'doctors.manage',
+    'reasons.manage',
+    'settings.manage',
+  ],
+}
+
 export default function TeamManagement({ tenant }) {
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
@@ -28,6 +44,13 @@ export default function TeamManagement({ tenant }) {
   const [customPerms, setCustomPerms] = useState([])
   const [addPassword, setAddPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  // Edit permissions modal state
+  const [editPermUser, setEditPermUser] = useState(null)
+  const [editPermPreset, setEditPermPreset] = useState('custom')
+  const [editPerms, setEditPerms] = useState([])
+  const [editPermError, setEditPermError] = useState('')
+  const [editPermSubmitting, setEditPermSubmitting] = useState(false)
 
   const loadUsers = async () => {
     setLoading(true)
@@ -53,17 +76,21 @@ export default function TeamManagement({ tenant }) {
       : `Enable account for ${user.email}?`
     if (!confirm(confirmMsg)) return
 
+    setError('')
     try {
       await api.patch(`/t/${tenant}/admin/users/${user.id}/status`, { status: newStatus })
       await loadUsers()
     } catch (e) {
-      alert(e?.response?.data?.message || 'Failed to update user status')
+      const msg = e?.response?.data?.message || 'Failed to update user status'
+      setError(msg)
+      alert(msg)
     }
   }
 
   const handleResetPassword = async (user) => {
     if (!confirm(`Reset password for ${user.email}? A temporary password will be generated.`)) return
 
+    setError('')
     try {
       const res = await api.post(`/t/${tenant}/admin/users/${user.id}/reset-password`, {})
       setTempPasswordNotice({
@@ -73,7 +100,9 @@ export default function TeamManagement({ tenant }) {
       })
       await loadUsers()
     } catch (e) {
-      alert(e?.response?.data?.message || 'Failed to reset password')
+      const msg = e?.response?.data?.message || 'Failed to reset password'
+      setError(msg)
+      alert(msg)
     }
   }
 
@@ -109,9 +138,55 @@ export default function TeamManagement({ tenant }) {
       setCustomPerms([])
       await loadUsers()
     } catch (e) {
-      alert(e?.response?.data?.message || 'Failed to create user')
+      const msg = e?.response?.data?.message || 'Failed to create user'
+      setError(msg)
+      alert(msg)
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const openEditPermissions = (user) => {
+    setEditPermUser(user)
+    setEditPerms([...(user.permissions || [])])
+    setEditPermPreset('custom')
+    setEditPermError('')
+  }
+
+  const handleEditPresetChange = (preset) => {
+    setEditPermPreset(preset)
+    if (preset !== 'custom' && PRESET_MAP[preset]) {
+      setEditPerms([...PRESET_MAP[preset]])
+    }
+  }
+
+  const toggleEditPerm = (perm) => {
+    setEditPermPreset('custom')
+    if (editPerms.includes(perm)) {
+      setEditPerms(editPerms.filter((p) => p !== perm))
+    } else {
+      setEditPerms([...editPerms, perm])
+    }
+  }
+
+  const handleUpdatePermissionsSubmit = async (e) => {
+    e.preventDefault()
+    if (!editPermUser) return
+    setEditPermSubmitting(true)
+    setEditPermError('')
+
+    try {
+      const payload = editPermPreset === 'custom'
+        ? { permissions: editPerms }
+        : { preset: editPermPreset }
+
+      await api.patch(`/t/${tenant}/admin/users/${editPermUser.id}/permissions`, payload)
+      setEditPermUser(null)
+      await loadUsers()
+    } catch (err) {
+      setEditPermError(err?.response?.data?.message || 'Failed to update permissions')
+    } finally {
+      setEditPermSubmitting(false)
     }
   }
 
@@ -132,7 +207,7 @@ export default function TeamManagement({ tenant }) {
         </div>
         <button
           onClick={() => setShowAddModal(true)}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg shadow-sm"
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg shadow-sm transition"
         >
           + Add Staff Member
         </button>
@@ -211,29 +286,41 @@ export default function TeamManagement({ tenant }) {
                       <span className="text-xs text-slate-500 italic">Full Clinic Admin Access</span>
                     ) : (
                       <div className="flex flex-wrap gap-1">
-                        {(u.permissions || []).map((p) => (
-                          <span key={p} className="bg-blue-50 text-blue-700 text-xs px-1.5 py-0.5 rounded border border-blue-200">
-                            {p}
-                          </span>
-                        ))}
+                        {(u.permissions || []).length === 0 ? (
+                          <span className="text-xs text-gray-400 italic">No permissions assigned</span>
+                        ) : (
+                          (u.permissions || []).map((p) => (
+                            <span key={p} className="bg-blue-50 text-blue-700 text-xs px-1.5 py-0.5 rounded border border-blue-200">
+                              {p}
+                            </span>
+                          ))
+                        )}
                       </div>
                     )}
                   </td>
                   <td className="p-3">
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       {u.role !== 'tenant_admin' && (
-                        <button
-                          onClick={() => handleToggleStatus(u)}
-                          className={`px-2.5 py-1 rounded text-xs font-medium text-white ${
-                            u.status === 'active' ? 'bg-gray-600 hover:bg-gray-700' : 'bg-green-600 hover:bg-green-700'
-                          }`}
-                        >
-                          {u.status === 'active' ? 'Disable' : 'Enable'}
-                        </button>
+                        <>
+                          <button
+                            onClick={() => openEditPermissions(u)}
+                            className="px-2.5 py-1 rounded text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white transition"
+                          >
+                            Edit Permissions
+                          </button>
+                          <button
+                            onClick={() => handleToggleStatus(u)}
+                            className={`px-2.5 py-1 rounded text-xs font-medium text-white transition ${
+                              u.status === 'active' ? 'bg-gray-600 hover:bg-gray-700' : 'bg-green-600 hover:bg-green-700'
+                            }`}
+                          >
+                            {u.status === 'active' ? 'Disable' : 'Enable'}
+                          </button>
+                        </>
                       )}
                       <button
                         onClick={() => handleResetPassword(u)}
-                        className="px-2.5 py-1 rounded text-xs font-medium bg-amber-600 hover:bg-amber-700 text-white"
+                        className="px-2.5 py-1 rounded text-xs font-medium bg-amber-600 hover:bg-amber-700 text-white transition"
                       >
                         Reset Password
                       </button>
@@ -246,6 +333,74 @@ export default function TeamManagement({ tenant }) {
         </div>
       )}
 
+      {/* Edit Permissions Modal */}
+      {editPermUser && (
+        <div className="fixed inset-0 bg-black/50 grid place-items-center p-4 z-50">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Edit Permissions</h3>
+              <p className="text-xs text-slate-500">Updating access privileges for {editPermUser.email}</p>
+            </div>
+
+            {editPermError && (
+              <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
+                {editPermError}
+              </div>
+            )}
+
+            <form onSubmit={handleUpdatePermissionsSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Apply Role Preset</label>
+                <select
+                  value={editPermPreset}
+                  onChange={(e) => handleEditPresetChange(e.target.value)}
+                  className="w-full border rounded-lg p-2 text-sm bg-white"
+                >
+                  <option value="custom">Custom Selection</option>
+                  <option value="viewer">Viewer (View appointments & doctors)</option>
+                  <option value="receptionist">Receptionist (Book, edit, cancel appointments)</option>
+                  <option value="manager">Manager (All appointment & doctor management)</option>
+                </select>
+              </div>
+
+              <div className="border rounded-lg p-3 bg-slate-50 space-y-2">
+                <span className="text-xs font-semibold text-slate-700 block">Permissions:</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {AVAILABLE_PERMISSIONS.map((perm) => (
+                    <label key={perm} className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editPerms.includes(perm)}
+                        onChange={() => toggleEditPerm(perm)}
+                      />
+                      <span>{perm}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t">
+                <button
+                  type="button"
+                  onClick={() => setEditPermUser(null)}
+                  className="px-4 py-2 border rounded-lg text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={editPermSubmitting}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition disabled:opacity-60"
+                >
+                  {editPermSubmitting ? 'Saving...' : 'Save Permissions'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Staff Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 grid place-items-center p-4 z-50">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4">
@@ -342,4 +497,3 @@ export default function TeamManagement({ tenant }) {
     </div>
   )
 }
-
