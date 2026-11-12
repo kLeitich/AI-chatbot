@@ -178,8 +178,10 @@ func main() {
 	admin.Delete("/appointments/:id", requirePermission(PermAppointmentsDelete), deleteAppointment)
 	admin.Get("/doctors", requirePermission(PermDoctorsView), listDoctors)
 	admin.Post("/doctors", requirePermission(PermDoctorsManage), createDoctor)
+	admin.Patch("/doctors/:id", requirePermission(PermDoctorsManage), patchDoctor)
 	admin.Get("/reasons", listReasons)
 	admin.Post("/reasons", requirePermission(PermReasonsManage), createReason)
+	admin.Patch("/reasons/:id", requirePermission(PermReasonsManage), patchReason)
 	admin.Get("/settings", requirePermission(PermSettingsManage), getTenantSettingsHandler)
 	admin.Patch("/settings", requirePermission(PermSettingsManage), updateTenantSettingsHandler)
 

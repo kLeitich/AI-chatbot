@@ -445,33 +445,154 @@ type createReasonRequest struct {
 func listDoctors(c *fiber.Ctx) error {
 	tenantSlug := c.Params("tenant")
 	if tenantSlug == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "missing tenant")
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "missing tenant")
 	}
 
 	var tenant Tenant
 	if err := db.Where("slug = ?", tenantSlug).First(&tenant).Error; err != nil {
-		return fiber.NewError(fiber.StatusNotFound, "tenant not found")
+		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "tenant not found")
+	}
+
+	query := db.Where("tenant_id = ?", tenant.ID)
+	// Public routes only show active doctors; admin routes show all
+	if !strings.Contains(c.Path(), "/admin/") {
+		query = query.Where("active = ?", true)
 	}
 
 	var doctors []Doctor
-	if err := db.Where("tenant_id = ?", tenant.ID).Order("name ASC").Find(&doctors).Error; err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "failed to list doctors")
+	if err := query.Order("name ASC").Find(&doctors).Error; err != nil {
+		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "failed to list doctors")
 	}
 	return c.JSON(doctors)
+}
+
+type patchDoctorRequest struct {
+	Name        *string `json:"name"`
+	Specialty   *string `json:"specialty"`
+	Bio         *string `json:"bio"`
+	WorkDays    *string `json:"work_days"`
+	WorkStart   *string `json:"work_start"`
+	WorkEnd     *string `json:"work_end"`
+	SlotMinutes *int    `json:"slot_minutes"`
+	Active      *bool   `json:"active"`
+}
+
+type patchReasonRequest struct {
+	Name   *string `json:"name"`
+	Label  *string `json:"label"`
+	Active *bool   `json:"active"`
+}
+
+func parseHHMMToMinutes(s string) (int, bool) {
+	parts := strings.Split(strings.TrimSpace(s), ":")
+	if len(parts) != 2 {
+		return 0, false
+	}
+	var h, m int
+	if _, err := fmt.Sscanf(parts[0], "%d", &h); err != nil {
+		return 0, false
+	}
+	if _, err := fmt.Sscanf(parts[1], "%d", &m); err != nil {
+		return 0, false
+	}
+	if h < 0 || h > 23 || m < 0 || m > 59 {
+		return 0, false
+	}
+	return h*60 + m, true
+}
+
+func patchDoctor(c *fiber.Ctx) error {
+	tenantID, ok := c.Locals("tenant_id").(uint)
+	if !ok || tenantID == 0 {
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeTokenExpired, "tenant not found in token")
+	}
+
+	docID, err := c.ParamsInt("id")
+	if err != nil || docID <= 0 {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "invalid doctor id")
+	}
+
+	var doc Doctor
+	if err := db.Where("id = ? AND tenant_id = ?", docID, tenantID).First(&doc).Error; err != nil {
+		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "doctor not found")
+	}
+
+	var req patchDoctorRequest
+	if err := c.BodyParser(&req); err != nil {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "invalid request body")
+	}
+
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name == "" {
+			return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "name cannot be empty")
+		}
+		doc.Name = name
+	}
+	if req.Specialty != nil {
+		doc.Specialty = strings.TrimSpace(*req.Specialty)
+	}
+	if req.Bio != nil {
+		doc.Bio = strings.TrimSpace(*req.Bio)
+	}
+	if req.WorkDays != nil {
+		wd := strings.TrimSpace(*req.WorkDays)
+		if wd == "" {
+			return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "work_days cannot be empty")
+		}
+		doc.WorkDays = wd
+	}
+
+	newStart := doc.WorkStart
+	newEnd := doc.WorkEnd
+	if req.WorkStart != nil {
+		newStart = strings.TrimSpace(*req.WorkStart)
+	}
+	if req.WorkEnd != nil {
+		newEnd = strings.TrimSpace(*req.WorkEnd)
+	}
+
+	startMins, okStart := parseHHMMToMinutes(newStart)
+	endMins, okEnd := parseHHMMToMinutes(newEnd)
+	if !okStart || !okEnd {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "invalid working hours format (HH:MM required)")
+	}
+	if startMins >= endMins {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "work_start must be earlier than work_end")
+	}
+	doc.WorkStart = newStart
+	doc.WorkEnd = newEnd
+
+	if req.SlotMinutes != nil {
+		if *req.SlotMinutes < 10 || *req.SlotMinutes > 120 {
+			return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "slot_minutes must be between 10 and 120")
+		}
+		doc.SlotMinutes = *req.SlotMinutes
+	}
+
+	if req.Active != nil {
+		doc.Active = *req.Active
+	}
+
+	if err := db.Save(&doc).Error; err != nil {
+		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "failed to update doctor")
+	}
+
+	return c.JSON(doc)
 }
 
 func createDoctor(c *fiber.Ctx) error {
 	tenantID, ok := c.Locals("tenant_id").(uint)
 	if !ok || tenantID == 0 {
-		return fiber.NewError(fiber.StatusUnauthorized, "tenant not found in token")
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeTokenExpired, "tenant not found in token")
 	}
 
 	var req createDoctorRequest
 	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "invalid request body")
 	}
 	if strings.TrimSpace(req.Name) == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "doctor name is required")
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "doctor name is required")
 	}
 
 	workDays := strings.TrimSpace(req.WorkDays)
@@ -491,6 +612,18 @@ func createDoctor(c *fiber.Ctx) error {
 		slotMins = 30
 	}
 
+	startMins, okStart := parseHHMMToMinutes(workStart)
+	endMins, okEnd := parseHHMMToMinutes(workEnd)
+	if !okStart || !okEnd {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "invalid working hours format (HH:MM required)")
+	}
+	if startMins >= endMins {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "work_start must be earlier than work_end")
+	}
+	if slotMins < 10 || slotMins > 120 {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "slot_minutes must be between 10 and 120")
+	}
+
 	doctor := Doctor{
 		TenantID:    tenantID,
 		Name:        strings.TrimSpace(req.Name),
@@ -500,10 +633,11 @@ func createDoctor(c *fiber.Ctx) error {
 		WorkStart:   workStart,
 		WorkEnd:     workEnd,
 		SlotMinutes: slotMins,
+		Active:      true,
 	}
 
 	if err := db.Create(&doctor).Error; err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "failed to create doctor")
+		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "failed to create doctor")
 	}
 	return c.Status(fiber.StatusCreated).JSON(doctor)
 }
@@ -511,42 +645,95 @@ func createDoctor(c *fiber.Ctx) error {
 func listReasons(c *fiber.Ctx) error {
 	tenantSlug := c.Params("tenant")
 	if tenantSlug == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "missing tenant")
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "missing tenant")
 	}
 
 	var tenant Tenant
 	if err := db.Where("slug = ?", tenantSlug).First(&tenant).Error; err != nil {
-		return fiber.NewError(fiber.StatusNotFound, "tenant not found")
+		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "tenant not found")
+	}
+
+	query := db.Where("tenant_id = ?", tenant.ID)
+	// Public routes only show active reasons; admin routes show all
+	if !strings.Contains(c.Path(), "/admin/") {
+		query = query.Where("active = ?", true)
 	}
 
 	var reasons []ReasonOption
-	if err := db.Where("tenant_id = ?", tenant.ID).Order("label ASC").Find(&reasons).Error; err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "failed to list reasons")
+	if err := query.Order("label ASC").Find(&reasons).Error; err != nil {
+		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "failed to list reasons")
 	}
 	return c.JSON(reasons)
+}
+
+func patchReason(c *fiber.Ctx) error {
+	tenantID, ok := c.Locals("tenant_id").(uint)
+	if !ok || tenantID == 0 {
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeTokenExpired, "tenant not found in token")
+	}
+
+	reasonID, err := c.ParamsInt("id")
+	if err != nil || reasonID <= 0 {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "invalid reason id")
+	}
+
+	var reason ReasonOption
+	if err := db.Where("id = ? AND tenant_id = ?", reasonID, tenantID).First(&reason).Error; err != nil {
+		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "reason not found")
+	}
+
+	var req patchReasonRequest
+	if err := c.BodyParser(&req); err != nil {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "invalid request body")
+	}
+
+	if req.Label != nil {
+		lbl := strings.TrimSpace(*req.Label)
+		if lbl == "" {
+			return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "label cannot be empty")
+		}
+		reason.Label = lbl
+	} else if req.Name != nil {
+		lbl := strings.TrimSpace(*req.Name)
+		if lbl == "" {
+			return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "name cannot be empty")
+		}
+		reason.Label = lbl
+	}
+
+	if req.Active != nil {
+		reason.Active = *req.Active
+	}
+
+	if err := db.Save(&reason).Error; err != nil {
+		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "failed to update reason")
+	}
+
+	return c.JSON(reason)
 }
 
 func createReason(c *fiber.Ctx) error {
 	tenantID, ok := c.Locals("tenant_id").(uint)
 	if !ok || tenantID == 0 {
-		return fiber.NewError(fiber.StatusUnauthorized, "tenant not found in token")
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeTokenExpired, "tenant not found in token")
 	}
 
 	var req createReasonRequest
 	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "invalid request body")
 	}
 	if strings.TrimSpace(req.Label) == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "reason label is required")
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "reason label is required")
 	}
 
 	reason := ReasonOption{
 		TenantID: tenantID,
 		Label:    strings.TrimSpace(req.Label),
+		Active:   true,
 	}
 
 	if err := db.Create(&reason).Error; err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "failed to create reason")
+		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "failed to create reason")
 	}
 	return c.Status(fiber.StatusCreated).JSON(reason)
 }

@@ -9,7 +9,7 @@ import (
 // tenantDoctorNames returns all active doctor names for a given tenant
 func tenantDoctorNames(tenantID uint) []string {
 	var docs []Doctor
-	if err := db.Where("tenant_id = ?", tenantID).Order("id ASC").Find(&docs).Error; err != nil {
+	if err := db.Where("tenant_id = ? AND active = ?", tenantID, true).Order("id ASC").Find(&docs).Error; err != nil {
 		return nil
 	}
 	var names []string

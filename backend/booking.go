@@ -147,9 +147,9 @@ func resolveDoctor(tenantID uint, doctorName string) (Doctor, error) {
 		return Doctor{}, errors.New("doctor name is required")
 	}
 
-	// 1. Exact match (case-insensitive) on name for this tenant
+	// 1. Exact match (case-insensitive) on name for this tenant (active doctors only)
 	var doc Doctor
-	err := db.Where("tenant_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?))", tenantID, cleanName).First(&doc).Error
+	err := db.Where("tenant_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?)) AND active = ?", tenantID, cleanName, true).First(&doc).Error
 	if err == nil {
 		return doc, nil
 	}
@@ -164,15 +164,15 @@ func resolveDoctor(tenantID uint, doctorName string) (Doctor, error) {
 		}
 	}
 
-	err = db.Where("tenant_id = ? AND (LOWER(TRIM(name)) = LOWER(TRIM(?)) OR LOWER(name) LIKE LOWER(?))",
-		tenantID, stripped, "%"+stripped+"%").First(&doc).Error
+	err = db.Where("tenant_id = ? AND (LOWER(TRIM(name)) = LOWER(TRIM(?)) OR LOWER(name) LIKE LOWER(?)) AND active = ?",
+		tenantID, stripped, "%"+stripped+"%", true).First(&doc).Error
 	if err == nil {
 		return doc, nil
 	}
 
-	// List all valid doctors for this tenant to help the user choose
+	// List all valid active doctors for this tenant to help the user choose
 	var allDocs []Doctor
-	_ = db.Where("tenant_id = ?", tenantID).Order("name ASC").Find(&allDocs).Error
+	_ = db.Where("tenant_id = ? AND active = ?", tenantID, true).Order("name ASC").Find(&allDocs).Error
 	var names []string
 	for _, d := range allDocs {
 		names = append(names, d.Name)

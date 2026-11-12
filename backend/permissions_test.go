@@ -33,6 +33,10 @@ func setupPermissionsTestApp(t *testing.T) (*fiber.App, uint, string, string, Us
 	admin.Delete("/appointments/:id", requirePermission(PermAppointmentsDelete), deleteAppointment)
 	admin.Get("/doctors", requirePermission(PermDoctorsView), listDoctors)
 	admin.Post("/doctors", requirePermission(PermDoctorsManage), createDoctor)
+	admin.Patch("/doctors/:id", requirePermission(PermDoctorsManage), patchDoctor)
+	admin.Get("/reasons", listReasons)
+	admin.Post("/reasons", requirePermission(PermReasonsManage), createReason)
+	admin.Patch("/reasons/:id", requirePermission(PermReasonsManage), patchReason)
 	admin.Get("/settings", requirePermission(PermSettingsManage), getTenantSettingsHandler)
 	admin.Patch("/settings", requirePermission(PermSettingsManage), updateTenantSettingsHandler)
 
@@ -460,6 +464,119 @@ func TestTenantSettingsPermissionsAndValidation(t *testing.T) {
 	}
 	if audit.TenantID != tenantID {
 		t.Errorf("Expected audit tenantID=%d, got %d", tenantID, audit.TenantID)
+	}
+}
+
+func TestDoctorAndReasonPatchAndInactiveExclusion(t *testing.T) {
+	app, tenantID, tenantSlug, adminTok, _ := setupPermissionsTestApp(t)
+
+	// Create a doctor
+	doc := Doctor{
+		TenantID:    tenantID,
+		Name:        "Dr. Test Active",
+		Specialty:   "General",
+		WorkDays:    "Mon,Tue,Wed",
+		WorkStart:   "09:00",
+		WorkEnd:     "17:00",
+		SlotMinutes: 30,
+		Active:      true,
+	}
+	db.Create(&doc)
+
+	// 1. Staff without doctors.manage cannot patch doctor
+	staffUser := User{Email: "staff_no_doc@test.internal", Role: RoleStaff, TenantID: tenantID, Status: "active", TokenVersion: 1}
+	db.Create(&staffUser)
+	staffTok, _ := createTenantJWTToken(staffUser.ID, staffUser.Email, tenantID, RoleStaff, 1)
+
+	patchBody := map[string]interface{}{"name": "Dr. Renamed"}
+	bPatch, _ := json.Marshal(patchBody)
+	reqForbidden := httptest.NewRequest("PATCH", fmt.Sprintf("/t/%s/admin/doctors/%d", tenantSlug, doc.ID), bytes.NewReader(bPatch))
+	reqForbidden.Header.Set("Content-Type", "application/json")
+	reqForbidden.Header.Set("Authorization", "Bearer "+staffTok)
+	respForbidden, _ := app.Test(reqForbidden, 10000)
+	if respForbidden.StatusCode != http.StatusForbidden {
+		t.Fatalf("Expected 403 Forbidden for staff without doctors.manage, got %d", respForbidden.StatusCode)
+	}
+
+	// 2. Validation error: start >= end
+	badHoursBody := map[string]interface{}{
+		"work_start": "17:00",
+		"work_end":   "09:00",
+	}
+	bBadHours, _ := json.Marshal(badHoursBody)
+	reqBadHours := httptest.NewRequest("PATCH", fmt.Sprintf("/t/%s/admin/doctors/%d", tenantSlug, doc.ID), bytes.NewReader(bBadHours))
+	reqBadHours.Header.Set("Content-Type", "application/json")
+	reqBadHours.Header.Set("Authorization", "Bearer "+adminTok)
+	respBadHours, _ := app.Test(reqBadHours, 10000)
+	if respBadHours.StatusCode != http.StatusBadRequest {
+		t.Fatalf("Expected 400 Bad Request when work_start >= work_end, got %d", respBadHours.StatusCode)
+	}
+
+	// 3. Validation error: slot_minutes out of range (5 minutes < 10)
+	badSlotBody := map[string]interface{}{
+		"slot_minutes": 5,
+	}
+	bBadSlot, _ := json.Marshal(badSlotBody)
+	reqBadSlot := httptest.NewRequest("PATCH", fmt.Sprintf("/t/%s/admin/doctors/%d", tenantSlug, doc.ID), bytes.NewReader(bBadSlot))
+	reqBadSlot.Header.Set("Content-Type", "application/json")
+	reqBadSlot.Header.Set("Authorization", "Bearer "+adminTok)
+	respBadSlot, _ := app.Test(reqBadSlot, 10000)
+	if respBadSlot.StatusCode != http.StatusBadRequest {
+		t.Fatalf("Expected 400 Bad Request when slot_minutes < 10, got %d", respBadSlot.StatusCode)
+	}
+
+	// 4. Valid patch to deactivate doctor (active = false)
+	deactivateBody := map[string]interface{}{
+		"active": false,
+	}
+	bDeact, _ := json.Marshal(deactivateBody)
+	reqDeact := httptest.NewRequest("PATCH", fmt.Sprintf("/t/%s/admin/doctors/%d", tenantSlug, doc.ID), bytes.NewReader(bDeact))
+	reqDeact.Header.Set("Content-Type", "application/json")
+	reqDeact.Header.Set("Authorization", "Bearer "+adminTok)
+	respDeact, err := app.Test(reqDeact, 10000)
+	if err != nil || respDeact.StatusCode != http.StatusOK {
+		t.Fatalf("Failed to deactivate doctor, status: %d", respDeact.StatusCode)
+	}
+
+	// 5. Inactive doctor is excluded from tenantDoctorNames
+	names := tenantDoctorNames(tenantID)
+	for _, n := range names {
+		if n == doc.Name {
+			t.Errorf("Inactive doctor '%s' should not be in tenantDoctorNames", doc.Name)
+		}
+	}
+
+	// 6. Inactive doctor cannot be queried for availability
+	_, errAvail := availableTimeSlots(tenantID, "2026-11-20", doc.Name)
+	if errAvail == nil {
+		t.Errorf("Expected error when requesting available slots for inactive doctor, got nil")
+	}
+
+	// 7. Create and patch reason
+	reason := ReasonOption{
+		TenantID: tenantID,
+		Label:    "Dental Check",
+		Active:   true,
+	}
+	db.Create(&reason)
+
+	patchReasonBody := map[string]interface{}{
+		"label":  "Advanced Dental Check",
+		"active": false,
+	}
+	bReas, _ := json.Marshal(patchReasonBody)
+	reqReas := httptest.NewRequest("PATCH", fmt.Sprintf("/t/%s/admin/reasons/%d", tenantSlug, reason.ID), bytes.NewReader(bReas))
+	reqReas.Header.Set("Content-Type", "application/json")
+	reqReas.Header.Set("Authorization", "Bearer "+adminTok)
+	respReas, err := app.Test(reqReas, 10000)
+	if err != nil || respReas.StatusCode != http.StatusOK {
+		t.Fatalf("Failed to patch reason, status: %d", respReas.StatusCode)
+	}
+
+	var updatedReason ReasonOption
+	db.First(&updatedReason, reason.ID)
+	if updatedReason.Active != false || updatedReason.Label != "Advanced Dental Check" {
+		t.Errorf("Reason was not properly updated: %+v", updatedReason)
 	}
 }
 
