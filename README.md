@@ -39,13 +39,13 @@ cp frontend/env.example frontend/.env
 ```
 
 **Backend (.env)**:
-- `APP_ENV` (default: development; set to `production` in production)
+- `APP_ENV` (Set to `development` locally, `production` on Render; if unset, fails closed to `production`. Valid values: `development`, `staging`, `production`)
 - `PORT` (default: 8080)
 - `JWT_SECRET` (**required in production**: minimum 32 characters, no default fallbacks)
 - `TRUST_PROXY` (set to `true` on Render or behind reverse proxies to enable proper client IP rate limiting via X-Forwarded-For)
 - `GROQ_API_KEY` (**required** - get from [Groq Console](https://console.groq.com/))
 - `GROQ_MODEL` (default: llama-3.3-70b-versatile)
-- `SQLITE_PATH` (default: appointments.db)
+- `SQLITE_PATH` (default: appointments.db, use `/data/appointments.db` on Render)
 - `DEFAULT_ADMIN_EMAIL` (optional seed email in development)
 - `DEFAULT_ADMIN_PASSWORD` (optional seed password in development)
 - `FRONTEND_URL` (default: http://localhost:3000 for local dev) - **Required in production**: Set to your Vercel URL (e.g., https://ai-chatbot-gamma-blue-98.vercel.app)

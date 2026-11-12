@@ -29,7 +29,12 @@ func chatHandler(c *fiber.Ctx) error {
 	// Validate session ID or generate a cryptographically secure 128-bit ID
 	sessionID := strings.TrimSpace(req.SessionID)
 	if sessionID == "" || !isValidSessionID(sessionID) {
-		sessionID = generateSessionID()
+		var err error
+		sessionID, err = generateSessionID()
+		if err != nil {
+			log.Printf("[Session Error] Failed to generate secure session ID: %v", err)
+			return fiber.NewError(fiber.StatusInternalServerError, "failed to generate secure session ID")
+		}
 	}
 
 	convKey := fmt.Sprintf("%s:%s", tenantSlug, sessionID)
@@ -338,6 +343,17 @@ func updateAppointment(c *fiber.Ctx) error {
 	var in Appointment
 	if err := c.BodyParser(&in); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
+	}
+
+	isCancelOnly := in.Status == StatusCancelled && in.Date == "" && in.Time == "" && in.Doctor == "" && in.PatientName == "" && in.Reason == ""
+	if isCancelOnly {
+		if !hasPermission(c, PermAppointmentsCancel) && !hasPermission(c, PermAppointmentsEdit) {
+			return fiber.NewError(fiber.StatusForbidden, "permission denied: missing 'appointments.cancel'")
+		}
+	} else {
+		if !hasPermission(c, PermAppointmentsEdit) {
+			return fiber.NewError(fiber.StatusForbidden, "permission denied: missing 'appointments.edit'")
+		}
 	}
 
 	if in.Status != "" {

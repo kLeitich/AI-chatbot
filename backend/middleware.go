@@ -1,16 +1,18 @@
 package main
 
 import (
+	"strings"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 )
 
 func jwtMiddleware(c *fiber.Ctx) error {
 	auth := c.Get("Authorization")
-	if auth == "" || len(auth) < 8 || auth[:7] != "Bearer " {
+	if auth == "" || len(auth) < 8 || !strings.HasPrefix(auth, "Bearer ") {
 		return fiber.NewError(fiber.StatusUnauthorized, "missing token")
 	}
-	tokStr := auth[7:]
+	tokStr := strings.TrimSpace(auth[7:])
 	secret := getJWTSecret()
 	if len(secret) == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "server configuration error: JWT secret not initialized")
@@ -30,42 +32,63 @@ func jwtMiddleware(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "invalid token claims")
 	}
 
-	// Extract user and tenant IDs from token for downstream handlers
-	if sub, ok := claims["sub"].(float64); ok {
-		c.Locals("user_id", uint(sub))
+	subVal, ok := claims["sub"]
+	if !ok {
+		return fiber.NewError(fiber.StatusUnauthorized, "invalid token subject")
 	}
-	if tid, ok := claims["tenantId"].(float64); ok {
-		c.Locals("tenant_id", uint(tid))
+	userIDFloat, ok := subVal.(float64)
+	if !ok {
+		return fiber.NewError(fiber.StatusUnauthorized, "invalid token subject type")
 	}
-	if role, ok := claims["role"].(string); ok {
-		c.Locals("role", role)
+	userID := uint(userIDFloat)
+
+	aud, _ := claims["aud"].(string)
+
+	// Fetch user from database to ensure account is active and token_version is current
+	var user User
+	if err := db.Select("id, email, role, status, must_change_password, token_version, tenant_id").First(&user, userID).Error; err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "user not found or deactivated")
 	}
+
+	if user.Status == "disabled" {
+		return fiber.NewError(fiber.StatusForbidden, "account is disabled; please contact support")
+	}
+
+	// Validate token_version if present in claims
+	if tvClaim, exists := claims["token_version"]; exists {
+		if tvFloat, ok := tvClaim.(float64); ok {
+			if int(tvFloat) != user.TokenVersion {
+				return fiber.NewError(fiber.StatusUnauthorized, "token has been revoked")
+			}
+		}
+	}
+
+	c.Locals("user_id", user.ID)
+	c.Locals("email", user.Email)
+	c.Locals("aud", aud)
+	c.Locals("role", user.Role)
+	c.Locals("tenant_id", user.TenantID)
+	c.Locals("must_change_password", user.MustChangePassword)
 
 	return c.Next()
 }
 
 func platformAdminMiddleware(c *fiber.Ctx) error {
-	role, ok := c.Locals("role").(string)
-	if !ok || role != "platform_admin" {
+	aud, _ := c.Locals("aud").(string)
+	role, _ := c.Locals("role").(string)
+	if aud != "platform_admin" || role != RolePlatformAdmin {
 		return fiber.NewError(fiber.StatusForbidden, "platform admin access required")
 	}
 	return c.Next()
 }
 
-// tenantAdminMiddleware ensures only tenant admins (or platform admins) can access admin routes
-// and prevents cross-tenant access.
-func tenantAdminMiddleware(c *fiber.Ctx) error {
-	role, ok := c.Locals("role").(string)
-	if !ok || (role != "tenant_admin" && role != "platform_admin") {
-		return fiber.NewError(fiber.StatusForbidden, "tenant admin access required")
+// validateTenantUser validates that the token belongs to a tenant user and matches the URL tenant
+func validateTenantUser(c *fiber.Ctx) error {
+	aud, _ := c.Locals("aud").(string)
+	if aud != "tenant_user" {
+		return fiber.NewError(fiber.StatusForbidden, "tenant user token required")
 	}
 
-	// platform_admin can access any tenant's admin
-	if role == "platform_admin" {
-		return c.Next()
-	}
-
-	// Ensure tenant in route matches tenant in token
 	tenantSlug := c.Params("tenant")
 	if tenantSlug != "" {
 		tokenTenantID, ok := c.Locals("tenant_id").(uint)
@@ -81,6 +104,29 @@ func tenantAdminMiddleware(c *fiber.Ctx) error {
 		if targetTenant.ID != tokenTenantID {
 			return fiber.NewError(fiber.StatusForbidden, "access denied for this tenant")
 		}
+	}
+
+	return nil
+}
+
+// tenantUserMiddleware ensures the caller has a valid tenant_user token matching the URL tenant slug.
+func tenantUserMiddleware(c *fiber.Ctx) error {
+	if err := validateTenantUser(c); err != nil {
+		return err
+	}
+	return c.Next()
+}
+
+// tenantAdminMiddleware ensures only tenant admins can access admin routes and prevents cross-tenant access.
+// Platform admin tokens are strictly forbidden on tenant admin endpoints.
+func tenantAdminMiddleware(c *fiber.Ctx) error {
+	if err := validateTenantUser(c); err != nil {
+		return err
+	}
+
+	role, _ := c.Locals("role").(string)
+	if role != RoleTenantAdmin {
+		return fiber.NewError(fiber.StatusForbidden, "tenant admin access required")
 	}
 
 	return c.Next()

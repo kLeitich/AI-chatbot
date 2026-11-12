@@ -31,8 +31,8 @@ export default function DashboardNav({ tenant, isPlatform = false }) {
       setError('New passwords do not match')
       return
     }
-    if (passwordData.newPassword.length < 6) {
-      setError('New password must be at least 6 characters')
+    if (passwordData.newPassword.length < 10) {
+      setError('New password must be at least 10 characters long')
       return
     }
 
@@ -60,8 +60,8 @@ export default function DashboardNav({ tenant, isPlatform = false }) {
       setError('Email and password required')
       return
     }
-    if (newUserData.password.length < 6) {
-      setError('Password must be at least 6 characters')
+    if (newUserData.password.length < 10) {
+      setError('Password must be at least 10 characters long')
       return
     }
 
@@ -108,15 +108,17 @@ export default function DashboardNav({ tenant, isPlatform = false }) {
                 >
                   Edit Password
                 </button>
-                <button
-                  onClick={() => {
-                    setShowAddUserModal(true)
-                    setShowMenu(false)
-                  }}
-                  className="w-full text-left px-4 py-2 hover:bg-slate-50 text-sm border-t"
-                >
-                  Add User
-                </button>
+                {!isPlatform && (
+                  <button
+                    onClick={() => {
+                      setShowAddUserModal(true)
+                      setShowMenu(false)
+                    }}
+                    className="w-full text-left px-4 py-2 hover:bg-slate-50 text-sm border-t"
+                  >
+                    Add User
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     handleLogout()

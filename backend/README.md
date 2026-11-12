@@ -16,9 +16,9 @@ The backend automatically loads environment variables from `.env` file if it exi
 
 | Variable | Default | Description |
 |---|---|---|
-| `APP_ENV` | `development` | Environment mode (`development` or `production`) |
+| `APP_ENV` | `development` (local) / `production` (prod) | Environment mode (`development`, `staging`, `production`). Fails closed to `production` if unset. |
 | `PORT` | 8080 | Server port |
-| `JWT_SECRET` | Required in prod (min 32 chars) | Secret for JWT token signing (refuses to start with weak/empty secret in prod) |
+| `JWT_SECRET` | Required in prod (min 32 chars) | Secret for JWT token signing (refuses to start with weak/empty secret in prod or staging) |
 | `TRUST_PROXY` | `false` | Set to `true` when behind a reverse proxy (e.g. Render) to enable accurate client IP rate limiting |
 | `GROQ_API_KEY` | **required** | Groq API key ([get one here](https://console.groq.com/)) |
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq model to use |

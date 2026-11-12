@@ -46,9 +46,22 @@ func loadEnvFile() {
 func main() {
 	loadEnvFile()
 
-	appEnv := getEnv("APP_ENV", "development")
+	// CLI subcommand for creating platform admins securely
+	if len(os.Args) > 1 && os.Args[1] == "create-platform-admin" {
+		dbPath := getEnv("SQLITE_PATH", "appointments.db")
+		_ = initDatabase(dbPath, "cli")
+		runCreatePlatformAdminCLI(os.Args[2:])
+		return
+	}
+
+	rawAppEnv := os.Getenv("APP_ENV")
+	appEnv, envErr := normalizeAndValidateAppEnv(rawAppEnv)
+	if envErr != nil {
+		log.Fatalf("[FATAL CONFIG] %v", envErr)
+	}
+
 	jwtSecret := os.Getenv("JWT_SECRET")
-	if err := validateConfig(appEnv, jwtSecret); err != nil {
+	if err := validateConfig(rawAppEnv, jwtSecret); err != nil {
 		log.Fatalf("[FATAL CONFIG] %v", err)
 	}
 
@@ -57,22 +70,14 @@ func main() {
 	defaultTenantID := initDatabase(dbPath, appEnv)
 
 	if strings.EqualFold(appEnv, "development") {
-		// Seed default tenant admin and platform admin only in development
+		// Seed default tenant admin only in development
 		defaultAdminEmail := getEnv("DEFAULT_ADMIN_EMAIL", "admin@example.com")
 		defaultAdminPass := getEnv("DEFAULT_ADMIN_PASSWORD", "admin123")
 		_ = ensureDefaultAdmin(defaultTenantID, defaultAdminEmail, defaultAdminPass)
-
-		defaultPlatformEmail := getEnv("DEFAULT_PLATFORM_ADMIN_EMAIL", "platform@example.com")
-		defaultPlatformPass := getEnv("DEFAULT_PLATFORM_ADMIN_PASSWORD", "platform123")
-		_ = ensurePlatformAdmin(defaultPlatformEmail, defaultPlatformPass)
-	} else {
-		// In other environments, create platform admin ONLY if explicitly set
-		platEmail := os.Getenv("DEFAULT_PLATFORM_ADMIN_EMAIL")
-		platPass := os.Getenv("DEFAULT_PLATFORM_ADMIN_PASSWORD")
-		if platEmail != "" && platPass != "" {
-			_ = ensurePlatformAdmin(platEmail, platPass)
-		}
 	}
+
+	// Bootstrap platform admin if zero exist and credentials provided
+	bootstrapPlatformAdmin(appEnv)
 
 	fiberConfig := fiber.Config{}
 	if strings.EqualFold(getEnv("TRUST_PROXY", "false"), "true") {
@@ -94,6 +99,17 @@ func main() {
 		},
 	})
 
+	platformLoginLimiter := limiter.New(limiter.Config{
+		Max:        5,
+		Expiration: 1 * time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP()
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return fiber.NewError(fiber.StatusTooManyRequests, "Too many login attempts. Please wait a minute.")
+		},
+	})
+
 	chatLimiter := limiter.New(limiter.Config{
 		Max:        30,
 		Expiration: 1 * time.Minute,
@@ -105,63 +121,75 @@ func main() {
 		},
 	})
 
-	// ✅ CORS Configuration (works for both local and production)
-	// Default to localhost for local development, use env var for production
+	// CORS Configuration
 	frontendURL := getEnv("FRONTEND_URL", "http://localhost:3000")
-	
-	// Always allow localhost for local development, add production URL if different
 	allowedOrigins := "http://localhost:3000"
 	if frontendURL != "http://localhost:3000" {
 		allowedOrigins = frontendURL + ", http://localhost:3000"
 	}
-	
+
 	log.Printf("[config] Allowing frontend origins: %s", allowedOrigins)
 
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: allowedOrigins,
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
-		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
+		AllowOrigins:     allowedOrigins,
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
+		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
 		AllowCredentials: true,
 	}))
 
-	// ✅ Routes
+	// Health check
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok", "time": time.Now()})
 	})
 
 	// Global auth endpoints (rate limited)
 	app.Post("/auth/register", authLimiter, companyRegisterHandler)
-	app.Post("/auth/platform/login", authLimiter, platformLoginHandler)
+	app.Post("/auth/platform/login", platformLoginLimiter, platformLoginHandler)
+	app.Post("/platform/login", platformLoginLimiter, platformLoginHandler)
 	app.Post("/auth/change-password", jwtMiddleware, changePasswordHandler)
 
-	// Platform admin endpoints
+	// Platform admin endpoints (strictly read-only views)
 	platform := app.Group("/platform", jwtMiddleware, platformAdminMiddleware)
-	platform.Get("/companies", listCompanies)
-	platform.Get("/users", listUsers)
-	platform.Post("/users", createPlatformUserHandler)
+	platform.Get("/tenants", listPlatformTenants)
+	platform.Get("/companies", listPlatformTenants)
+	platform.Get("/users", listPlatformUsers)
+	platform.Get("/doctors", listPlatformDoctors)
+	platform.Get("/appointments", listPlatformAppointments)
+	platform.Get("/audit", listPlatformAuditLogs)
 
 	// Tenant-scoped API under /t/:tenant/...
 	tenant := app.Group("/t/:tenant")
-
 	tenant.Post("/chat", chatLimiter, chatHandler)
 	tenant.Post("/register", authLimiter, registerHandler)
 	tenant.Post("/login", authLimiter, loginHandler)
 	tenant.Post("/change-password", jwtMiddleware, changePasswordHandler)
+	tenant.Get("/me", jwtMiddleware, tenantUserMiddleware, getTenantMeHandler)
 	tenant.Get("/doctors", listDoctors)
 	tenant.Get("/reasons", listReasons)
 	tenant.Get("/availability", getAvailability)
 
-	// Admin endpoints require tenant_admin (or platform_admin) role and matching tenant
-	admin := tenant.Group("/admin", jwtMiddleware, tenantAdminMiddleware)
-	admin.Get("/appointments", listAppointments)
-	admin.Post("/appointments", createAppointment)
+	// Admin and staff endpoints with granular permissions
+	admin := tenant.Group("/admin", jwtMiddleware, tenantUserMiddleware)
+	admin.Get("/me", getTenantMeHandler)
+	admin.Get("/appointments", requirePermission(PermAppointmentsView), listAppointments)
+	admin.Post("/appointments", requirePermission(PermAppointmentsCreate), createAppointment)
 	admin.Put("/appointments/:id", updateAppointment)
-	admin.Delete("/appointments/:id", deleteAppointment)
-	admin.Post("/users", createUserHandler)
-	admin.Post("/doctors", createDoctor)
-	admin.Post("/reasons", createReason)
+	admin.Delete("/appointments/:id", requirePermission(PermAppointmentsDelete), deleteAppointment)
+	admin.Get("/doctors", requirePermission(PermDoctorsView), listDoctors)
+	admin.Post("/doctors", requirePermission(PermDoctorsManage), createDoctor)
+	admin.Get("/reasons", listReasons)
+	admin.Post("/reasons", requirePermission(PermReasonsManage), createReason)
 
-	// ✅ Graceful shutdown handling
+	// Tenant admin user management endpoints (tenant_admin role strictly required)
+	admin.Get("/permissions", tenantAdminMiddleware, listPermissionsHandler)
+	admin.Get("/users", tenantAdminMiddleware, listTenantUsersHandler)
+	admin.Post("/users", tenantAdminMiddleware, createTenantUserHandler)
+	admin.Patch("/users/:id/permissions", tenantAdminMiddleware, updateUserPermissionsHandler)
+	admin.Patch("/users/:id/status", tenantAdminMiddleware, updateUserStatusHandler)
+	admin.Post("/users/:id/reset-password", tenantAdminMiddleware, resetUserPasswordHandler)
+	admin.Get("/audit", tenantAdminMiddleware, listTenantAuditLogs)
+
+	// Graceful shutdown handling
 	go func() {
 		log.Printf("[startup] Listening on :%s", port)
 		if err := app.Listen(":" + port); err != nil {

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
@@ -59,12 +60,14 @@ func isValidSessionID(sid string) bool {
 	return sessionIDRegex.MatchString(sid)
 }
 
-func generateSessionID() string {
+var randReader io.Reader = rand.Reader
+
+func generateSessionID() (string, error) {
 	b := make([]byte, 16) // 128-bit
-	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("%016x%016x", time.Now().UnixNano(), time.Now().Unix())
+	if _, err := io.ReadFull(randReader, b); err != nil {
+		return "", fmt.Errorf("failed to generate secure session ID: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 var (
