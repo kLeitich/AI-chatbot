@@ -13,7 +13,15 @@ function weekLabel(date) { const s=startOfWeek(date); const e=addDays(s,6); cons
 const HOURS = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`)
 const SLOT_PX = 48
 function weekdayWithDate(d){ const name=d.toLocaleDateString(undefined,{weekday:'short'}); return `${name} ${d.getDate()}` }
-function colorFor(ap){ if(!ap) return 'bg-sky-500'; if(ap.status==='cancelled') return 'bg-gray-500'; if(ap.status==='confirmed') return 'bg-emerald-500'; const key=(ap.doctor||ap.patient_name||'').toLowerCase(); let hash=0; for(let i=0;i<key.length;i++) hash=(hash*31+key.charCodeAt(i))>>>0; const palette=['bg-sky-500','bg-indigo-500','bg-purple-500','bg-pink-500','bg-rose-500','bg-orange-500','bg-amber-500','bg-lime-500','bg-teal-500','bg-cyan-500']; return palette[hash%palette.length] }
+function colorFor(ap){
+  if(!ap) return 'bg-sky-500'
+  if(ap.status==='cancelled') return 'bg-gray-400 line-through'
+  if(ap.status==='confirmed') return 'bg-emerald-600'
+  if(ap.status==='pending') return 'bg-amber-500'
+  if(ap.status==='completed') return 'bg-blue-600'
+  if(ap.status==='no_show') return 'bg-purple-600'
+  return 'bg-sky-500'
+}
 
 export default function Calendar({
   date = new Date(),

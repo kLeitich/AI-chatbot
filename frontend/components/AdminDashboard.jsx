@@ -299,6 +299,8 @@ export default function AdminDashboard({ tenant = 'default' }) {
                     <option value="pending">pending</option>
                     <option value="confirmed">confirmed</option>
                     <option value="cancelled">cancelled</option>
+                    <option value="completed">completed</option>
+                    <option value="no_show">no_show</option>
                   </select>
                 </div>
                 <div className="flex justify-end">
@@ -353,6 +355,8 @@ export default function AdminDashboard({ tenant = 'default' }) {
                     <option value="pending">pending</option>
                     <option value="confirmed">confirmed</option>
                     <option value="cancelled">cancelled</option>
+                    <option value="completed">completed</option>
+                    <option value="no_show">no_show</option>
                   </select>
                 </L>
               </div>

@@ -1,4 +1,12 @@
 "use client"
+const statusStyles = {
+  confirmed: 'bg-emerald-100 text-emerald-800 border border-emerald-300',
+  pending: 'bg-amber-100 text-amber-800 border border-amber-300',
+  cancelled: 'bg-rose-100 text-rose-800 border border-rose-300',
+  completed: 'bg-blue-100 text-blue-800 border border-blue-300',
+  no_show: 'bg-purple-100 text-purple-800 border border-purple-300',
+}
+
 export default function AppointmentTable({
   appointments,
   onEdit,
@@ -42,12 +50,10 @@ export default function AppointmentTable({
                 <Td>{a.time}</Td>
                 <Td>{a.reason}</Td>
                 <Td>
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                    a.status === 'confirmed' ? 'bg-green-100 text-green-800' :
-                    a.status === 'cancelled' ? 'bg-red-100 text-red-800' :
-                    'bg-yellow-100 text-yellow-800'
+                  <span className={`px-2 py-0.5 rounded text-xs font-semibold uppercase tracking-wider ${
+                    statusStyles[a.status] || 'bg-gray-100 text-gray-800'
                   }`}>
-                    {a.status}
+                    {a.status === 'no_show' ? 'No Show' : a.status}
                   </span>
                 </Td>
                 {hasActions && (
