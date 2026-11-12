@@ -102,6 +102,38 @@ func checkDuplicatesAndCreateActiveSlotIndex() {
 	}
 }
 
+// migrateUsersToPermissions migrates legacy non-admin users to role 'staff' and seeds the 'viewer' preset
+func migrateUsersToPermissions() {
+	var legacyUsers []User
+	if err := db.Where("role NOT IN (?, ?)", RolePlatformAdmin, RoleTenantAdmin).Find(&legacyUsers).Error; err != nil {
+		log.Printf("[migration] Error checking users for permission migration: %v", err)
+		return
+	}
+
+	if len(legacyUsers) == 0 {
+		return
+	}
+
+	fmt.Printf("[MIGRATION] Migrating %d legacy users to role '%s' with 'viewer' permissions:\n", len(legacyUsers), RoleStaff)
+	viewerPerms := PermissionPresets["viewer"]
+
+	for _, u := range legacyUsers {
+		fmt.Printf(" - Migrating user ID %d (%s, tenant %d) from role '%s' -> '%s'\n", u.ID, u.Email, u.TenantID, u.Role, RoleStaff)
+		db.Model(&User{}).Where("id = ?", u.ID).Update("role", RoleStaff)
+
+		for _, perm := range viewerPerms {
+			var cnt int64
+			db.Model(&UserPermission{}).Where("user_id = ? AND permission = ?", u.ID, perm).Count(&cnt)
+			if cnt == 0 {
+				_ = db.Create(&UserPermission{
+					UserID:     u.ID,
+					Permission: perm,
+				}).Error
+			}
+		}
+	}
+}
+
 // initDatabase connects to SQLite with WAL mode and busy timeout, runs migrations, and conditionally seeds data
 func initDatabase(dbPath string, appEnv string) uint {
 	// 1. Back up database before migrations
@@ -121,9 +153,11 @@ func initDatabase(dbPath string, appEnv string) uint {
 		log.Fatalf("failed to connect database: %v", err)
 	}
 
-	if err := db.AutoMigrate(&Tenant{}, &User{}, &Doctor{}, &ReasonOption{}, &Appointment{}, &AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&Tenant{}, &User{}, &Doctor{}, &ReasonOption{}, &Appointment{}, &AuditLog{}, &UserPermission{}); err != nil {
 		log.Fatalf("failed to migrate database: %v", err)
 	}
+
+	migrateUsersToPermissions()
 
 	if strings.EqualFold(appEnv, "development") {
 		defaultTenantID := ensureDefaultTenant()

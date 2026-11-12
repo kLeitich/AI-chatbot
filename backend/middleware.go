@@ -82,20 +82,13 @@ func platformAdminMiddleware(c *fiber.Ctx) error {
 	return c.Next()
 }
 
-// tenantAdminMiddleware ensures only tenant admins can access admin routes and prevents cross-tenant access.
-// Platform admin tokens are strictly forbidden on tenant admin endpoints.
-func tenantAdminMiddleware(c *fiber.Ctx) error {
+// validateTenantUser validates that the token belongs to a tenant user and matches the URL tenant
+func validateTenantUser(c *fiber.Ctx) error {
 	aud, _ := c.Locals("aud").(string)
 	if aud != "tenant_user" {
 		return fiber.NewError(fiber.StatusForbidden, "tenant user token required")
 	}
 
-	role, _ := c.Locals("role").(string)
-	if role != RoleTenantAdmin {
-		return fiber.NewError(fiber.StatusForbidden, "tenant admin access required")
-	}
-
-	// Ensure tenant in route matches tenant in token
 	tenantSlug := c.Params("tenant")
 	if tenantSlug != "" {
 		tokenTenantID, ok := c.Locals("tenant_id").(uint)
@@ -111,6 +104,29 @@ func tenantAdminMiddleware(c *fiber.Ctx) error {
 		if targetTenant.ID != tokenTenantID {
 			return fiber.NewError(fiber.StatusForbidden, "access denied for this tenant")
 		}
+	}
+
+	return nil
+}
+
+// tenantUserMiddleware ensures the caller has a valid tenant_user token matching the URL tenant slug.
+func tenantUserMiddleware(c *fiber.Ctx) error {
+	if err := validateTenantUser(c); err != nil {
+		return err
+	}
+	return c.Next()
+}
+
+// tenantAdminMiddleware ensures only tenant admins can access admin routes and prevents cross-tenant access.
+// Platform admin tokens are strictly forbidden on tenant admin endpoints.
+func tenantAdminMiddleware(c *fiber.Ctx) error {
+	if err := validateTenantUser(c); err != nil {
+		return err
+	}
+
+	role, _ := c.Locals("role").(string)
+	if role != RoleTenantAdmin {
+		return fiber.NewError(fiber.StatusForbidden, "tenant admin access required")
 	}
 
 	return c.Next()

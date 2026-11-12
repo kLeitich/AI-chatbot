@@ -163,19 +163,30 @@ func main() {
 	tenant.Post("/register", authLimiter, registerHandler)
 	tenant.Post("/login", authLimiter, loginHandler)
 	tenant.Post("/change-password", jwtMiddleware, changePasswordHandler)
+	tenant.Get("/me", jwtMiddleware, tenantUserMiddleware, getTenantMeHandler)
 	tenant.Get("/doctors", listDoctors)
 	tenant.Get("/reasons", listReasons)
 	tenant.Get("/availability", getAvailability)
 
-	// Admin endpoints require tenant_admin role and matching tenant
-	admin := tenant.Group("/admin", jwtMiddleware, tenantAdminMiddleware)
-	admin.Get("/appointments", listAppointments)
-	admin.Post("/appointments", createAppointment)
+	// Admin and staff endpoints with granular permissions
+	admin := tenant.Group("/admin", jwtMiddleware, tenantUserMiddleware)
+	admin.Get("/me", getTenantMeHandler)
+	admin.Get("/appointments", requirePermission(PermAppointmentsView), listAppointments)
+	admin.Post("/appointments", requirePermission(PermAppointmentsCreate), createAppointment)
 	admin.Put("/appointments/:id", updateAppointment)
-	admin.Delete("/appointments/:id", deleteAppointment)
-	admin.Post("/users", createUserHandler)
-	admin.Post("/doctors", createDoctor)
-	admin.Post("/reasons", createReason)
+	admin.Delete("/appointments/:id", requirePermission(PermAppointmentsDelete), deleteAppointment)
+	admin.Get("/doctors", requirePermission(PermDoctorsView), listDoctors)
+	admin.Post("/doctors", requirePermission(PermDoctorsManage), createDoctor)
+	admin.Get("/reasons", listReasons)
+	admin.Post("/reasons", requirePermission(PermReasonsManage), createReason)
+
+	// Tenant admin user management endpoints (tenant_admin role strictly required)
+	admin.Get("/permissions", tenantAdminMiddleware, listPermissionsHandler)
+	admin.Get("/users", tenantAdminMiddleware, listTenantUsersHandler)
+	admin.Post("/users", tenantAdminMiddleware, createTenantUserHandler)
+	admin.Patch("/users/:id/permissions", tenantAdminMiddleware, updateUserPermissionsHandler)
+	admin.Patch("/users/:id/status", tenantAdminMiddleware, updateUserStatusHandler)
+	admin.Post("/users/:id/reset-password", tenantAdminMiddleware, resetUserPasswordHandler)
 
 	// Graceful shutdown handling
 	go func() {

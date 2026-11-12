@@ -381,45 +381,8 @@ func generateTenantSlug(name string) string {
 	return result.String()
 }
 
-type createUserRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
 func createUserHandler(c *fiber.Ctx) error {
-	var req createUserRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
-	}
-	if !validateEmail(req.Email) || len(req.Password) < 6 {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid email or password")
-	}
-
-	tenantID, ok := c.Locals("tenant_id").(uint)
-	if !ok || tenantID == 0 {
-		return fiber.NewError(fiber.StatusUnauthorized, "invalid tenant context")
-	}
-
-	hashedPassword, err := hashPassword(req.Password)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "failed to hash password")
-	}
-
-	// Strictly RoleStaff, never accept role from input
-	user := User{
-		Email:              strings.ToLower(strings.TrimSpace(req.Email)),
-		Password:           hashedPassword,
-		Role:               RoleStaff,
-		Status:             "active",
-		MustChangePassword: true,
-		TokenVersion:       1,
-		TenantID:           tenantID,
-	}
-	if err := db.Create(&user).Error; err != nil {
-		return fiber.NewError(fiber.StatusConflict, "user already exists")
-	}
-
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"message": "user created successfully", "email": req.Email})
+	return createTenantUserHandler(c)
 }
 
 type changePasswordRequest struct {

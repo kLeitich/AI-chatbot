@@ -345,6 +345,17 @@ func updateAppointment(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
 	}
 
+	isCancelOnly := in.Status == StatusCancelled && in.Date == "" && in.Time == "" && in.Doctor == "" && in.PatientName == "" && in.Reason == ""
+	if isCancelOnly {
+		if !hasPermission(c, PermAppointmentsCancel) && !hasPermission(c, PermAppointmentsEdit) {
+			return fiber.NewError(fiber.StatusForbidden, "permission denied: missing 'appointments.cancel'")
+		}
+	} else {
+		if !hasPermission(c, PermAppointmentsEdit) {
+			return fiber.NewError(fiber.StatusForbidden, "permission denied: missing 'appointments.edit'")
+		}
+	}
+
 	if in.Status != "" {
 		if !isValidStatus(in.Status) {
 			return fiber.NewError(fiber.StatusBadRequest, "invalid appointment status")
