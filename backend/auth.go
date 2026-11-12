@@ -121,45 +121,6 @@ func createJWTToken(userID uint, email string, tenantID uint, role string) (stri
 	return createTenantJWTToken(userID, email, tenantID, role, 1)
 }
 
-func registerHandler(c *fiber.Ctx) error {
-	var req authRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
-	}
-	if !validateEmail(req.Email) || len(req.Password) < 6 {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid email or password")
-	}
-
-	tenantSlug := c.Params("tenant")
-	if tenantSlug == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "missing tenant")
-	}
-
-	var tenant Tenant
-	if err := db.Where("slug = ?", tenantSlug).First(&tenant).Error; err != nil {
-		return fiber.NewError(fiber.StatusNotFound, "tenant not found")
-	}
-	pw, err := hashPassword(req.Password)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "failed to hash password")
-	}
-
-	// Strictly assign RoleStaff; client cannot supply role
-	user := User{
-		Email:              strings.ToLower(strings.TrimSpace(req.Email)),
-		Password:           pw,
-		TenantID:           tenant.ID,
-		Role:               RoleStaff,
-		Status:             "active",
-		MustChangePassword: false,
-		TokenVersion:       1,
-	}
-	if err := db.Create(&user).Error; err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "user may already exist")
-	}
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"message": "registered"})
-}
-
 func loginHandler(c *fiber.Ctx) error {
 	var req authRequest
 	if err := c.BodyParser(&req); err != nil {

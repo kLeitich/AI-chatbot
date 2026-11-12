@@ -34,7 +34,6 @@ func setupAuthTestApp(t *testing.T) (*fiber.App, uint, string) {
 	platform.Get("/users", listUsers)
 
 	tenant := app.Group("/t/:tenant")
-	tenant.Post("/register", registerHandler)
 	tenant.Post("/login", loginHandler)
 	tenant.Post("/change-password", jwtMiddleware, changePasswordHandler)
 
@@ -194,29 +193,20 @@ func TestRoleInjectionPrevented(t *testing.T) {
 		t.Fatalf("Expected RoleTenantAdmin, got %q", registeredAdmin.Role)
 	}
 
-	// 2. Tenant self-registration cannot set role
+	// 2. Tenant self-registration endpoint /t/:tenant/register must NOT exist (404 Not Found)
 	bodyUser := map[string]string{
 		"email":    "malicious@example.com",
 		"password": "Password12345!",
-		"role":     "platform_admin", // Malicious injection
 	}
 	b2, _ := json.Marshal(bodyUser)
 	req2 := httptest.NewRequest("POST", fmt.Sprintf("/t/%s/register", tenantSlug), bytes.NewReader(b2))
 	req2.Header.Set("Content-Type", "application/json")
 	resp2, err := app.Test(req2, 10000)
 	if err != nil {
-		t.Fatalf("Tenant user register request failed: %v", err)
+		t.Fatalf("Tenant register request failed: %v", err)
 	}
-	if resp2.StatusCode != http.StatusCreated {
-		t.Fatalf("Tenant user register status: %d", resp2.StatusCode)
-	}
-
-	var registeredStaff User
-	if err := db.Where("email = ?", "malicious@example.com").First(&registeredStaff).Error; err != nil {
-		t.Fatalf("Registered staff not found: %v", err)
-	}
-	if registeredStaff.Role != RoleStaff {
-		t.Fatalf("Expected RoleStaff, got %q", registeredStaff.Role)
+	if resp2.StatusCode != http.StatusNotFound {
+		t.Fatalf("Expected 404 Not Found for removed /t/:tenant/register route, got status: %d", resp2.StatusCode)
 	}
 
 	// 3. Tenant admin user creation cannot set role

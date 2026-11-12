@@ -162,7 +162,6 @@ func main() {
 	// Tenant-scoped API under /t/:tenant/...
 	tenant := app.Group("/t/:tenant")
 	tenant.Post("/chat", chatLimiter, chatHandler)
-	tenant.Post("/register", authLimiter, registerHandler)
 	tenant.Post("/login", authLimiter, loginHandler)
 	tenant.Post("/change-password", jwtMiddleware, changePasswordHandler)
 	tenant.Get("/me", jwtMiddleware, tenantUserMiddleware, getTenantMeHandler)
