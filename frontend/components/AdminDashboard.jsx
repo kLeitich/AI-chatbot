@@ -1,13 +1,15 @@
 "use client"
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import api from '../lib/api'
+import { usePermissions } from '../context/PermissionContext'
 import AppointmentTable from './AppointmentTable'
 import Calendar from './Calendar'
 import DashboardNav from './DashboardNav'
 import TeamManagement from './TeamManagement'
 
 export default function AdminDashboard({ tenant = 'default' }) {
+  const permCtx = usePermissions()
   const [appointments, setAppointments] = useState([])
   const [editing, setEditing] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -17,13 +19,29 @@ export default function AdminDashboard({ tenant = 'default' }) {
   const router = useRouter()
 
   // User profile & permissions from /t/:tenant/me
-  const [userProfile, setUserProfile] = useState(null)
+  const [localUserProfile, setLocalUserProfile] = useState(null)
   const [forcePasswordChange, setForcePasswordChange] = useState(false)
   const [forceCurrentPassword, setForceCurrentPassword] = useState('')
   const [forceNewPassword, setForceNewPassword] = useState('')
   const [forceConfirmPassword, setForceConfirmPassword] = useState('')
   const [forcePasswordError, setForcePasswordError] = useState('')
   const [forcePasswordSuccess, setForcePasswordSuccess] = useState('')
+
+  // Active user profile: from context if available, else local
+  const userProfile = permCtx.user || localUserProfile
+
+  // Permission helper: uses context `can` or computes locally
+  const can = useCallback(
+    (permission) => {
+      if (permCtx.user) {
+        return permCtx.can(permission)
+      }
+      if (!userProfile) return false
+      if (userProfile.role === 'tenant_admin') return true
+      return (userProfile.permissions || []).includes(permission)
+    },
+    [permCtx, userProfile]
+  )
 
   // Filters
   const [fPatient, setFPatient] = useState('')
@@ -34,12 +52,15 @@ export default function AdminDashboard({ tenant = 'default' }) {
   const [fStatus, setFStatus] = useState('')
 
   // Check /me and load appointments
-  const loadProfileAndData = async () => {
+  const loadProfileAndData = useCallback(async () => {
     setLoading(true)
     try {
-      const meRes = await api.get(`/t/${tenant}/me`)
-      const profile = meRes.data
-      setUserProfile(profile)
+      let profile = permCtx.user
+      if (!profile) {
+        const meRes = await api.get(`/t/${tenant}/me`)
+        profile = meRes.data
+        setLocalUserProfile(profile)
+      }
 
       if (profile.must_change_password) {
         setForcePasswordChange(true)
@@ -50,6 +71,8 @@ export default function AdminDashboard({ tenant = 'default' }) {
       if (canView) {
         const res = await api.get(`/t/${tenant}/admin/appointments`)
         setAppointments(res.data || [])
+      } else {
+        setAppointments([])
       }
     } catch (e) {
       if (e?.response?.status === 401) {
@@ -59,19 +82,18 @@ export default function AdminDashboard({ tenant = 'default' }) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [tenant, permCtx.user, router])
 
   useEffect(() => {
     loadProfileAndData()
-  }, [tenant])
+  }, [loadProfileAndData])
 
   // Permission flags
   const isTenantAdmin = userProfile?.role === 'tenant_admin'
-  const perms = userProfile?.permissions || []
-  const canViewAppointments = isTenantAdmin || perms.includes('appointments.view')
-  const canCreateAppointments = isTenantAdmin || perms.includes('appointments.create')
-  const canEditAppointments = isTenantAdmin || perms.includes('appointments.edit') || perms.includes('appointments.cancel')
-  const canDeleteAppointments = isTenantAdmin || perms.includes('appointments.delete')
+  const canViewAppointments = can('appointments.view')
+  const canCreateAppointments = can('appointments.create')
+  const canEditAppointments = can('appointments.edit') || can('appointments.cancel')
+  const canDeleteAppointments = can('appointments.delete')
 
   const filtered = useMemo(() => {
     const match = (val, q) => String(val || '').toLowerCase().includes(String(q || '').toLowerCase())
