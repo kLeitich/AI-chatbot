@@ -53,8 +53,11 @@ export default function AdminDashboard({ tenant = 'default' }) {
     loadDoctors()
   }, [loadDoctors])
 
+  const editingDoctor = editing?.doctor
+  const editingDate = editing?.date
+
   useEffect(() => {
-    if (!editing || !editing.doctor || !editing.date) {
+    if (!editingDoctor || !editingDate) {
       setAvailableSlots([])
       return
     }
@@ -63,7 +66,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
       setLoadingSlots(true)
       try {
         const res = await api.get(`/t/${tenant}/availability`, {
-          params: { doctor: editing.doctor, date: editing.date },
+          params: { doctor: editingDoctor, date: editingDate },
         })
         if (!cancelled) {
           setAvailableSlots(res.data?.slots || [])
@@ -78,7 +81,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
     return () => {
       cancelled = true
     }
-  }, [editing?.doctor, editing?.date, tenant])
+  }, [editingDoctor, editingDate, tenant])
 
   // User profile & permissions from /t/:tenant/me
   const [localUserProfile, setLocalUserProfile] = useState(null)

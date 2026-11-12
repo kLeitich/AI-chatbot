@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import api from '../lib/api'
 
 const AVAILABLE_PERMISSIONS = [
@@ -52,7 +52,7 @@ export default function TeamManagement({ tenant }) {
   const [editPermError, setEditPermError] = useState('')
   const [editPermSubmitting, setEditPermSubmitting] = useState(false)
 
-  const loadUsers = async () => {
+  const loadUsers = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
@@ -63,11 +63,11 @@ export default function TeamManagement({ tenant }) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [tenant])
 
   useEffect(() => {
     loadUsers()
-  }, [tenant])
+  }, [loadUsers])
 
   const handleToggleStatus = async (user) => {
     const newStatus = user.status === 'active' ? 'disabled' : 'active'
