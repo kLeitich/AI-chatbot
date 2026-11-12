@@ -46,6 +46,14 @@ func loadEnvFile() {
 func main() {
 	loadEnvFile()
 
+	// CLI subcommand for creating platform admins securely
+	if len(os.Args) > 1 && os.Args[1] == "create-platform-admin" {
+		dbPath := getEnv("SQLITE_PATH", "appointments.db")
+		_ = initDatabase(dbPath, "cli")
+		runCreatePlatformAdminCLI(os.Args[2:])
+		return
+	}
+
 	rawAppEnv := os.Getenv("APP_ENV")
 	appEnv, envErr := normalizeAndValidateAppEnv(rawAppEnv)
 	if envErr != nil {
@@ -62,22 +70,14 @@ func main() {
 	defaultTenantID := initDatabase(dbPath, appEnv)
 
 	if strings.EqualFold(appEnv, "development") {
-		// Seed default tenant admin and platform admin only in development
+		// Seed default tenant admin only in development
 		defaultAdminEmail := getEnv("DEFAULT_ADMIN_EMAIL", "admin@example.com")
 		defaultAdminPass := getEnv("DEFAULT_ADMIN_PASSWORD", "admin123")
 		_ = ensureDefaultAdmin(defaultTenantID, defaultAdminEmail, defaultAdminPass)
-
-		defaultPlatformEmail := getEnv("DEFAULT_PLATFORM_ADMIN_EMAIL", "platform@example.com")
-		defaultPlatformPass := getEnv("DEFAULT_PLATFORM_ADMIN_PASSWORD", "platform123")
-		_ = ensurePlatformAdmin(defaultPlatformEmail, defaultPlatformPass)
-	} else {
-		// In other environments, create platform admin ONLY if explicitly set
-		platEmail := os.Getenv("DEFAULT_PLATFORM_ADMIN_EMAIL")
-		platPass := os.Getenv("DEFAULT_PLATFORM_ADMIN_PASSWORD")
-		if platEmail != "" && platPass != "" {
-			_ = ensurePlatformAdmin(platEmail, platPass)
-		}
 	}
+
+	// Bootstrap platform admin if zero exist and credentials provided
+	bootstrapPlatformAdmin(appEnv)
 
 	fiberConfig := fiber.Config{}
 	if strings.EqualFold(getEnv("TRUST_PROXY", "false"), "true") {
@@ -99,6 +99,17 @@ func main() {
 		},
 	})
 
+	platformLoginLimiter := limiter.New(limiter.Config{
+		Max:        5,
+		Expiration: 1 * time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP()
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return fiber.NewError(fiber.StatusTooManyRequests, "Too many login attempts. Please wait a minute.")
+		},
+	})
+
 	chatLimiter := limiter.New(limiter.Config{
 		Max:        30,
 		Expiration: 1 * time.Minute,
@@ -110,44 +121,40 @@ func main() {
 		},
 	})
 
-	// ✅ CORS Configuration (works for both local and production)
-	// Default to localhost for local development, use env var for production
+	// CORS Configuration
 	frontendURL := getEnv("FRONTEND_URL", "http://localhost:3000")
-	
-	// Always allow localhost for local development, add production URL if different
 	allowedOrigins := "http://localhost:3000"
 	if frontendURL != "http://localhost:3000" {
 		allowedOrigins = frontendURL + ", http://localhost:3000"
 	}
-	
+
 	log.Printf("[config] Allowing frontend origins: %s", allowedOrigins)
 
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: allowedOrigins,
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
-		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
+		AllowOrigins:     allowedOrigins,
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
+		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
 		AllowCredentials: true,
 	}))
 
-	// ✅ Routes
+	// Health check
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok", "time": time.Now()})
 	})
 
 	// Global auth endpoints (rate limited)
 	app.Post("/auth/register", authLimiter, companyRegisterHandler)
-	app.Post("/auth/platform/login", authLimiter, platformLoginHandler)
+	app.Post("/auth/platform/login", platformLoginLimiter, platformLoginHandler)
+	app.Post("/platform/login", platformLoginLimiter, platformLoginHandler)
 	app.Post("/auth/change-password", jwtMiddleware, changePasswordHandler)
 
-	// Platform admin endpoints
+	// Platform admin endpoints (read-only views)
 	platform := app.Group("/platform", jwtMiddleware, platformAdminMiddleware)
 	platform.Get("/companies", listCompanies)
 	platform.Get("/users", listUsers)
-	platform.Post("/users", createPlatformUserHandler)
 
 	// Tenant-scoped API under /t/:tenant/...
 	tenant := app.Group("/t/:tenant")
-
 	tenant.Post("/chat", chatLimiter, chatHandler)
 	tenant.Post("/register", authLimiter, registerHandler)
 	tenant.Post("/login", authLimiter, loginHandler)
@@ -156,7 +163,7 @@ func main() {
 	tenant.Get("/reasons", listReasons)
 	tenant.Get("/availability", getAvailability)
 
-	// Admin endpoints require tenant_admin (or platform_admin) role and matching tenant
+	// Admin endpoints require tenant_admin role and matching tenant
 	admin := tenant.Group("/admin", jwtMiddleware, tenantAdminMiddleware)
 	admin.Get("/appointments", listAppointments)
 	admin.Post("/appointments", createAppointment)
@@ -166,7 +173,7 @@ func main() {
 	admin.Post("/doctors", createDoctor)
 	admin.Post("/reasons", createReason)
 
-	// ✅ Graceful shutdown handling
+	// Graceful shutdown handling
 	go func() {
 		log.Printf("[startup] Listening on :%s", port)
 		if err := app.Listen(":" + port); err != nil {
