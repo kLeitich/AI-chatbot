@@ -207,7 +207,7 @@ export default function DashboardNav({ tenant, isPlatform = false }) {
                   value={newUserData.email}
                   onChange={(e) => setNewUserData({ ...newUserData, email: e.target.value })}
                   className="w-full border rounded px-3 py-2 text-sm"
-                  placeholder="user@example.com"
+                  placeholder="user@clinic.internal"
                 />
               </div>
               <div>

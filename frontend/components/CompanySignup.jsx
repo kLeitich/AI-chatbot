@@ -36,8 +36,8 @@ export default function CompanySignup() {
       setLoading(false)
       return
     }
-    if (formData.admin_password.length < 6) {
-      setError('Password must be at least 6 characters')
+    if (formData.admin_password.length < 10) {
+      setError('Password must be at least 10 characters long')
       setLoading(false)
       return
     }
@@ -66,7 +66,7 @@ export default function CompanySignup() {
       }
       setError('Registration completed but no tenant or token returned.')
     } catch (e) {
-      const message = e?.response?.data?.error || 'Registration failed. Please try again.'
+      const message = e?.response?.data?.message || e?.response?.data?.error || 'Registration failed. Please try again.'
       setError(message)
     } finally {
       setLoading(false)
@@ -110,9 +110,10 @@ export default function CompanySignup() {
             name="admin_password"
             value={formData.admin_password}
             onChange={handleChange}
-            placeholder="At least 6 characters"
+            placeholder="At least 10 characters"
             className="w-full border rounded p-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
+          <p className="text-xs text-gray-500 mt-1">Must be at least 10 characters long.</p>
         </div>
 
         <div>

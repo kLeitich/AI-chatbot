@@ -4,8 +4,8 @@ import { useRouter } from 'next/navigation'
 import api from '../lib/api'
 
 export default function AdminLogin({ tenant = 'default' }) {
-  const [email, setEmail] = useState('admin@example.com')
-  const [password, setPassword] = useState('admin123')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(false)

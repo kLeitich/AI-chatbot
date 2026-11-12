@@ -4,8 +4,8 @@ import { useRouter } from 'next/navigation'
 import api from '../lib/api'
 
 export default function PlatformLogin() {
-  const [email, setEmail] = useState('platform@example.com')
-  const [password, setPassword] = useState('platform123')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(false)
@@ -50,7 +50,7 @@ export default function PlatformLogin() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className="mt-2 w-full rounded-lg border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="platform@example.com"
+            placeholder="admin@platform.internal"
           />
         </label>
 
