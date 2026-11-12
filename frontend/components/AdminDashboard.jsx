@@ -1,13 +1,17 @@
 "use client"
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import api from '../lib/api'
+import { usePermissions } from '../context/PermissionContext'
 import AppointmentTable from './AppointmentTable'
 import Calendar from './Calendar'
 import DashboardNav from './DashboardNav'
 import TeamManagement from './TeamManagement'
+import ClinicSetup from './ClinicSetup'
+import AuditLogTable from './AuditLogTable'
 
 export default function AdminDashboard({ tenant = 'default' }) {
+  const permCtx = usePermissions()
   const [appointments, setAppointments] = useState([])
   const [editing, setEditing] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -16,14 +20,90 @@ export default function AdminDashboard({ tenant = 'default' }) {
   const [currentDate, setCurrentDate] = useState(new Date())
   const router = useRouter()
 
+  // Modal helpers for doctors, availability, and conflict alternatives
+  const [activeDoctors, setActiveDoctors] = useState([])
+  const [availableSlots, setAvailableSlots] = useState([])
+  const [loadingSlots, setLoadingSlots] = useState(false)
+  const [modalError, setModalError] = useState('')
+  const [conflictAlternatives, setConflictAlternatives] = useState([])
+
+  const todayInNairobi = useMemo(() => {
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Africa/Nairobi',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date())
+    } catch {
+      return new Date().toISOString().slice(0, 10)
+    }
+  }, [])
+
+  const loadDoctors = useCallback(async () => {
+    try {
+      const res = await api.get(`/t/${tenant}/doctors`)
+      setActiveDoctors(res.data || [])
+    } catch (e) {
+      console.error('Failed to load doctors:', e)
+    }
+  }, [tenant])
+
+  useEffect(() => {
+    loadDoctors()
+  }, [loadDoctors])
+
+  useEffect(() => {
+    if (!editing || !editing.doctor || !editing.date) {
+      setAvailableSlots([])
+      return
+    }
+    let cancelled = false
+    const fetchSlots = async () => {
+      setLoadingSlots(true)
+      try {
+        const res = await api.get(`/t/${tenant}/availability`, {
+          params: { doctor: editing.doctor, date: editing.date },
+        })
+        if (!cancelled) {
+          setAvailableSlots(res.data?.slots || [])
+        }
+      } catch (err) {
+        if (!cancelled) setAvailableSlots([])
+      } finally {
+        if (!cancelled) setLoadingSlots(false)
+      }
+    }
+    fetchSlots()
+    return () => {
+      cancelled = true
+    }
+  }, [editing?.doctor, editing?.date, tenant])
+
   // User profile & permissions from /t/:tenant/me
-  const [userProfile, setUserProfile] = useState(null)
+  const [localUserProfile, setLocalUserProfile] = useState(null)
   const [forcePasswordChange, setForcePasswordChange] = useState(false)
   const [forceCurrentPassword, setForceCurrentPassword] = useState('')
   const [forceNewPassword, setForceNewPassword] = useState('')
   const [forceConfirmPassword, setForceConfirmPassword] = useState('')
   const [forcePasswordError, setForcePasswordError] = useState('')
   const [forcePasswordSuccess, setForcePasswordSuccess] = useState('')
+
+  // Active user profile: from context if available, else local
+  const userProfile = permCtx.user || localUserProfile
+
+  // Permission helper: uses context `can` or computes locally
+  const can = useCallback(
+    (permission) => {
+      if (permCtx.user) {
+        return permCtx.can(permission)
+      }
+      if (!userProfile) return false
+      if (userProfile.role === 'tenant_admin') return true
+      return (userProfile.permissions || []).includes(permission)
+    },
+    [permCtx, userProfile]
+  )
 
   // Filters
   const [fPatient, setFPatient] = useState('')
@@ -34,12 +114,15 @@ export default function AdminDashboard({ tenant = 'default' }) {
   const [fStatus, setFStatus] = useState('')
 
   // Check /me and load appointments
-  const loadProfileAndData = async () => {
+  const loadProfileAndData = useCallback(async () => {
     setLoading(true)
     try {
-      const meRes = await api.get(`/t/${tenant}/me`)
-      const profile = meRes.data
-      setUserProfile(profile)
+      let profile = permCtx.user
+      if (!profile) {
+        const meRes = await api.get(`/t/${tenant}/me`)
+        profile = meRes.data
+        setLocalUserProfile(profile)
+      }
 
       if (profile.must_change_password) {
         setForcePasswordChange(true)
@@ -50,6 +133,8 @@ export default function AdminDashboard({ tenant = 'default' }) {
       if (canView) {
         const res = await api.get(`/t/${tenant}/admin/appointments`)
         setAppointments(res.data || [])
+      } else {
+        setAppointments([])
       }
     } catch (e) {
       if (e?.response?.status === 401) {
@@ -59,19 +144,20 @@ export default function AdminDashboard({ tenant = 'default' }) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [tenant, permCtx.user, router])
 
   useEffect(() => {
     loadProfileAndData()
-  }, [tenant])
+  }, [loadProfileAndData])
 
   // Permission flags
   const isTenantAdmin = userProfile?.role === 'tenant_admin'
-  const perms = userProfile?.permissions || []
-  const canViewAppointments = isTenantAdmin || perms.includes('appointments.view')
-  const canCreateAppointments = isTenantAdmin || perms.includes('appointments.create')
-  const canEditAppointments = isTenantAdmin || perms.includes('appointments.edit') || perms.includes('appointments.cancel')
-  const canDeleteAppointments = isTenantAdmin || perms.includes('appointments.delete')
+  const canViewAppointments = can('appointments.view')
+  const canCreateAppointments = can('appointments.create')
+  const canEditAppointments = can('appointments.edit')
+  const canCancelAppointments = can('appointments.cancel')
+  const canDeleteAppointments = can('appointments.delete')
+  const canAccessSetup = can('doctors.manage') || can('reasons.manage') || can('settings.manage')
 
   const filtered = useMemo(() => {
     const match = (val, q) => String(val || '').toLowerCase().includes(String(q || '').toLowerCase())
@@ -89,6 +175,16 @@ export default function AdminDashboard({ tenant = 'default' }) {
     setFPatient(''); setFDoctor(''); setFDate(''); setFTime(''); setFReason(''); setFStatus('')
   }
 
+  const onCancel = async (a) => {
+    if (!confirm(`Cancel appointment #${a.id}?`)) return
+    try {
+      await api.put(`/t/${tenant}/admin/appointments/${a.id}`, { status: 'cancelled' })
+      loadProfileAndData()
+    } catch (e) {
+      alert(e?.response?.data?.message || 'Failed to cancel appointment')
+    }
+  }
+
   const onDelete = async (a) => {
     if (!confirm(`Delete appointment #${a.id}?`)) return
     try {
@@ -100,6 +196,17 @@ export default function AdminDashboard({ tenant = 'default' }) {
   }
 
   const onSave = async () => {
+    setModalError('')
+    setConflictAlternatives([])
+    if (!editing?.patient_name?.trim() || !editing?.doctor?.trim() || !editing?.date || !editing?.time) {
+      setModalError('Please fill in patient name, doctor, date, and time.')
+      return
+    }
+    if (editing.date < todayInNairobi) {
+      setModalError('Cannot book an appointment in the past.')
+      return
+    }
+
     const { id, ...rest } = editing
     try {
       if (id) {
@@ -108,14 +215,29 @@ export default function AdminDashboard({ tenant = 'default' }) {
         await api.post(`/t/${tenant}/admin/appointments`, rest)
       }
       setEditing(null)
+      setModalError('')
+      setConflictAlternatives([])
       await loadProfileAndData()
     } catch (e) {
-      alert(e?.response?.data?.message || 'Failed to save appointment')
+      const code = e?.response?.data?.code
+      const msg = e?.response?.data?.message || 'Failed to save appointment'
+      const alts = e?.response?.data?.alternatives || []
+
+      setModalError(msg)
+      if (code === 'SLOT_TAKEN' || e?.response?.status === 409) {
+        setConflictAlternatives(alts)
+      }
     }
   }
 
-  const onAddFromCalendar = (draft) => { setEditing({ ...draft }) }
+  const onAddFromCalendar = (draft) => {
+    setModalError('')
+    setConflictAlternatives([])
+    setEditing({ ...draft })
+  }
   const onAddFromTable = () => {
+    setModalError('')
+    setConflictAlternatives([])
     setEditing({ patient_name: '', doctor: '', date: '', time: '', reason: '', status: 'pending' })
   }
 
@@ -222,7 +344,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
       <div className="max-w-5xl mx-auto p-4 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {view !== 'team' && canCreateAppointments && (
+            {view !== 'team' && view !== 'setup' && view !== 'audit' && canCreateAppointments && (
               <button className="px-3 py-1 rounded bg-blue-600 text-white font-medium text-sm" onClick={onAddFromTable}>
                 + New Appointment
               </button>
@@ -235,8 +357,14 @@ export default function AdminDashboard({ tenant = 'default' }) {
                   <button className={`px-3 py-1 text-sm ${view === 'calendar' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('calendar')}>Calendar</button>
                 </>
               )}
+              {canAccessSetup && (
+                <button className={`px-3 py-1 text-sm font-medium ${view === 'setup' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('setup')}>Clinic Setup</button>
+              )}
               {isTenantAdmin && (
-                <button className={`px-3 py-1 text-sm font-medium ${view === 'team' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('team')}>Team</button>
+                <>
+                  <button className={`px-3 py-1 text-sm font-medium ${view === 'team' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('team')}>Team</button>
+                  <button className={`px-3 py-1 text-sm font-medium ${view === 'audit' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('audit')}>Audit</button>
+                </>
               )}
             </div>
 
@@ -251,6 +379,10 @@ export default function AdminDashboard({ tenant = 'default' }) {
 
         {view === 'team' ? (
           <TeamManagement tenant={tenant} />
+        ) : view === 'setup' ? (
+          <ClinicSetup tenant={tenant} />
+        ) : view === 'audit' ? (
+          <AuditLogTable tenant={tenant} />
         ) : (
           <>
             {view === 'table' && (
@@ -266,6 +398,8 @@ export default function AdminDashboard({ tenant = 'default' }) {
                     <option value="pending">pending</option>
                     <option value="confirmed">confirmed</option>
                     <option value="cancelled">cancelled</option>
+                    <option value="completed">completed</option>
+                    <option value="no_show">no_show</option>
                   </select>
                 </div>
                 <div className="flex justify-end">
@@ -279,9 +413,11 @@ export default function AdminDashboard({ tenant = 'default' }) {
             ) : view === 'table' ? (
               <AppointmentTable
                 appointments={filtered}
-                onEdit={setEditing}
-                onDelete={onDelete}
+                onEdit={canEditAppointments ? setEditing : undefined}
+                onCancel={canCancelAppointments ? onCancel : undefined}
+                onDelete={canDeleteAppointments ? onDelete : undefined}
                 canEdit={canEditAppointments}
+                canCancel={canCancelAppointments}
                 canDelete={canDeleteAppointments}
               />
             ) : (
@@ -292,33 +428,173 @@ export default function AdminDashboard({ tenant = 'default' }) {
                 appointments={filtered}
                 onAdd={canCreateAppointments ? onAddFromCalendar : undefined}
                 onEdit={canEditAppointments ? setEditing : undefined}
+                onCancel={canCancelAppointments ? onCancel : undefined}
                 onDelete={canDeleteAppointments ? onDelete : undefined}
+                canCreate={canCreateAppointments}
+                canEdit={canEditAppointments}
+                canCancel={canCancelAppointments}
+                canDelete={canDeleteAppointments}
               />
             )}
           </>
         )}
 
         {editing && (
-          <div className="fixed inset-0 bg-black/40 grid place-items-center p-4 z-50">
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-4 space-y-3">
-              <h3 className="text-lg font-medium">{editing.id ? `Edit Appointment #${editing.id}` : 'Create Appointment'}</h3>
+          <div className="fixed inset-0 bg-black/40 grid place-items-center p-4 z-50 overflow-y-auto">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-5 space-y-4">
+              <h3 className="text-lg font-bold text-gray-900">
+                {editing.id ? `Edit Appointment #${editing.id}` : 'Create Appointment'}
+              </h3>
+
+              {modalError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 space-y-2">
+                  <p className="font-semibold">{modalError}</p>
+                  {conflictAlternatives.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-red-200">
+                      <p className="text-xs font-semibold text-gray-700 mb-1.5">
+                        Available alternative slots:
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {conflictAlternatives.map((alt) => (
+                          <button
+                            type="button"
+                            key={alt}
+                            onClick={() => {
+                              setEditing((prev) => ({ ...prev, time: alt }))
+                              setConflictAlternatives([])
+                              setModalError('')
+                            }}
+                            className="px-2.5 py-1 text-xs font-bold bg-white text-blue-700 border border-blue-300 rounded shadow-sm hover:bg-blue-50 transition"
+                          >
+                            ⏱️ {alt}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
-                <L label="Patient"><input className="border rounded p-2 w-full text-sm" value={editing.patient_name || ''} onChange={(e) => setEditing({ ...editing, patient_name: e.target.value })} /></L>
-                <L label="Doctor"><input className="border rounded p-2 w-full text-sm" value={editing.doctor || ''} onChange={(e) => setEditing({ ...editing, doctor: e.target.value })} /></L>
-                <L label="Date"><input className="border rounded p-2 w-full text-sm" value={editing.date || ''} onChange={(e) => setEditing({ ...editing, date: e.target.value })} placeholder="YYYY-MM-DD" /></L>
-                <L label="Time"><input className="border rounded p-2 w-full text-sm" value={editing.time || ''} onChange={(e) => setEditing({ ...editing, time: e.target.value })} placeholder="HH:MM" /></L>
-                <L label="Reason" className="col-span-2"><input className="border rounded p-2 w-full text-sm" value={editing.reason || ''} onChange={(e) => setEditing({ ...editing, reason: e.target.value })} /></L>
+                <L label="Patient Name *">
+                  <input
+                    required
+                    className="border rounded p-2 w-full text-sm focus:ring focus:outline-none"
+                    value={editing.patient_name || ''}
+                    onChange={(e) => setEditing({ ...editing, patient_name: e.target.value })}
+                    placeholder="e.g. John Doe"
+                  />
+                </L>
+
+                <L label="Doctor *">
+                  <select
+                    required
+                    className="border rounded p-2 w-full text-sm bg-white focus:ring focus:outline-none"
+                    value={editing.doctor || ''}
+                    onChange={(e) => setEditing({ ...editing, doctor: e.target.value, time: '' })}
+                  >
+                    <option value="">Select a doctor...</option>
+                    {activeDoctors.map((doc) => (
+                      <option key={doc.id} value={doc.name}>
+                        {doc.name} {doc.specialty ? `(${doc.specialty})` : ''}
+                      </option>
+                    ))}
+                    {editing.doctor && !activeDoctors.some((d) => d.name === editing.doctor) && (
+                      <option value={editing.doctor}>{editing.doctor}</option>
+                    )}
+                  </select>
+                </L>
+
+                <L label="Date *">
+                  <input
+                    type="date"
+                    required
+                    min={todayInNairobi}
+                    className="border rounded p-2 w-full text-sm focus:ring focus:outline-none"
+                    value={editing.date || ''}
+                    onChange={(e) => setEditing({ ...editing, date: e.target.value, time: '' })}
+                  />
+                  <span className="text-[10px] text-gray-500">Clinic Timezone: Africa/Nairobi</span>
+                </L>
+
+                <L label="Time *">
+                  {editing.doctor && editing.date && availableSlots.length > 0 ? (
+                    <select
+                      className="border rounded p-2 w-full text-sm bg-white focus:ring focus:outline-none"
+                      value={editing.time || ''}
+                      onChange={(e) => setEditing({ ...editing, time: e.target.value })}
+                    >
+                      <option value="">Select an available slot...</option>
+                      {availableSlots.map((slot) => (
+                        <option key={slot} value={slot}>
+                          {slot}
+                        </option>
+                      ))}
+                      {editing.time && !availableSlots.includes(editing.time) && (
+                        <option value={editing.time}>{editing.time} (Current)</option>
+                      )}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      required
+                      placeholder="HH:MM (e.g. 10:00)"
+                      className="border rounded p-2 w-full text-sm focus:ring focus:outline-none"
+                      value={editing.time || ''}
+                      onChange={(e) => setEditing({ ...editing, time: e.target.value })}
+                    />
+                  )}
+                  {loadingSlots && (
+                    <span className="text-[10px] text-blue-600 animate-pulse">Loading slots...</span>
+                  )}
+                  {!loadingSlots && editing.doctor && editing.date && availableSlots.length === 0 && (
+                    <span className="text-[10px] text-amber-600">No free slots on this date</span>
+                  )}
+                </L>
+
+                <L label="Reason" className="col-span-2">
+                  <input
+                    className="border rounded p-2 w-full text-sm focus:ring focus:outline-none"
+                    value={editing.reason || ''}
+                    onChange={(e) => setEditing({ ...editing, reason: e.target.value })}
+                    placeholder="e.g. General consultation"
+                  />
+                </L>
+
                 <L label="Status" className="col-span-2">
-                  <select className="border rounded p-2 w-full text-sm bg-white" value={editing.status || 'pending'} onChange={(e) => setEditing({ ...editing, status: e.target.value })}>
+                  <select
+                    className="border rounded p-2 w-full text-sm bg-white focus:ring focus:outline-none"
+                    value={editing.status || 'pending'}
+                    onChange={(e) => setEditing({ ...editing, status: e.target.value })}
+                  >
                     <option value="pending">pending</option>
                     <option value="confirmed">confirmed</option>
                     <option value="cancelled">cancelled</option>
+                    <option value="completed">completed</option>
+                    <option value="no_show">no_show</option>
                   </select>
                 </L>
               </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <button className="px-4 py-2 rounded border text-sm" onClick={() => setEditing(null)}>Cancel</button>
-                <button className="px-4 py-2 rounded bg-blue-600 text-white text-sm font-medium" onClick={onSave}>{editing.id ? 'Save' : 'Create'}</button>
+
+              <div className="flex justify-end gap-2 pt-3 border-t">
+                <button
+                  type="button"
+                  className="px-4 py-2 rounded-lg border text-sm text-gray-700 hover:bg-gray-50 transition"
+                  onClick={() => {
+                    setEditing(null)
+                    setModalError('')
+                    setConflictAlternatives([])
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium shadow-sm transition"
+                  onClick={onSave}
+                >
+                  {editing.id ? 'Save Changes' : 'Create Appointment'}
+                </button>
               </div>
             </div>
           </div>

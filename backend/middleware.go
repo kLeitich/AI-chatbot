@@ -10,12 +10,12 @@ import (
 func jwtMiddleware(c *fiber.Ctx) error {
 	auth := c.Get("Authorization")
 	if auth == "" || len(auth) < 8 || !strings.HasPrefix(auth, "Bearer ") {
-		return fiber.NewError(fiber.StatusUnauthorized, "missing token")
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeTokenExpired, "missing token")
 	}
 	tokStr := strings.TrimSpace(auth[7:])
 	secret := getJWTSecret()
 	if len(secret) == 0 {
-		return fiber.NewError(fiber.StatusInternalServerError, "server configuration error: JWT secret not initialized")
+		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "server configuration error: JWT secret not initialized")
 	}
 	tok, err := jwt.Parse(tokStr, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -24,21 +24,21 @@ func jwtMiddleware(c *fiber.Ctx) error {
 		return secret, nil
 	})
 	if err != nil || !tok.Valid {
-		return fiber.NewError(fiber.StatusUnauthorized, "invalid token")
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeTokenExpired, "invalid or expired token")
 	}
 
 	claims, ok := tok.Claims.(jwt.MapClaims)
 	if !ok {
-		return fiber.NewError(fiber.StatusUnauthorized, "invalid token claims")
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeTokenExpired, "invalid token claims")
 	}
 
 	subVal, ok := claims["sub"]
 	if !ok {
-		return fiber.NewError(fiber.StatusUnauthorized, "invalid token subject")
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeTokenExpired, "invalid token subject")
 	}
 	userIDFloat, ok := subVal.(float64)
 	if !ok {
-		return fiber.NewError(fiber.StatusUnauthorized, "invalid token subject type")
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeTokenExpired, "invalid token subject type")
 	}
 	userID := uint(userIDFloat)
 
@@ -47,18 +47,18 @@ func jwtMiddleware(c *fiber.Ctx) error {
 	// Fetch user from database to ensure account is active and token_version is current
 	var user User
 	if err := db.Select("id, email, role, status, must_change_password, token_version, tenant_id").First(&user, userID).Error; err != nil {
-		return fiber.NewError(fiber.StatusUnauthorized, "user not found or deactivated")
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeAccountDisabled, "user not found or deactivated")
 	}
 
 	if user.Status == "disabled" {
-		return fiber.NewError(fiber.StatusForbidden, "account is disabled; please contact support")
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeAccountDisabled, "account is disabled; please contact support")
 	}
 
 	// Validate token_version if present in claims
 	if tvClaim, exists := claims["token_version"]; exists {
 		if tvFloat, ok := tvClaim.(float64); ok {
 			if int(tvFloat) != user.TokenVersion {
-				return fiber.NewError(fiber.StatusUnauthorized, "token has been revoked")
+				return sendError(c, fiber.StatusUnauthorized, ErrCodeTokenRevoked, "token has been revoked")
 			}
 		}
 	}
@@ -77,7 +77,7 @@ func platformAdminMiddleware(c *fiber.Ctx) error {
 	aud, _ := c.Locals("aud").(string)
 	role, _ := c.Locals("role").(string)
 	if aud != "platform_admin" || role != RolePlatformAdmin {
-		return fiber.NewError(fiber.StatusForbidden, "platform admin access required")
+		return sendError(c, fiber.StatusForbidden, ErrCodePermissionDenied, "platform admin access required")
 	}
 	return c.Next()
 }
@@ -86,23 +86,23 @@ func platformAdminMiddleware(c *fiber.Ctx) error {
 func validateTenantUser(c *fiber.Ctx) error {
 	aud, _ := c.Locals("aud").(string)
 	if aud != "tenant_user" {
-		return fiber.NewError(fiber.StatusForbidden, "tenant user token required")
+		return sendError(c, fiber.StatusForbidden, ErrCodePermissionDenied, "tenant user token required")
 	}
 
 	tenantSlug := c.Params("tenant")
 	if tenantSlug != "" {
 		tokenTenantID, ok := c.Locals("tenant_id").(uint)
 		if !ok || tokenTenantID == 0 {
-			return fiber.NewError(fiber.StatusUnauthorized, "tenant not found in token")
+			return sendError(c, fiber.StatusUnauthorized, ErrCodeTokenExpired, "tenant not found in token")
 		}
 
 		var targetTenant Tenant
 		if err := db.Where("slug = ?", tenantSlug).First(&targetTenant).Error; err != nil {
-			return fiber.NewError(fiber.StatusNotFound, "tenant not found")
+			return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "tenant not found")
 		}
 
 		if targetTenant.ID != tokenTenantID {
-			return fiber.NewError(fiber.StatusForbidden, "access denied for this tenant")
+			return sendError(c, fiber.StatusForbidden, ErrCodePermissionDenied, "access denied for this tenant")
 		}
 	}
 
@@ -126,7 +126,7 @@ func tenantAdminMiddleware(c *fiber.Ctx) error {
 
 	role, _ := c.Locals("role").(string)
 	if role != RoleTenantAdmin {
-		return fiber.NewError(fiber.StatusForbidden, "tenant admin access required")
+		return sendError(c, fiber.StatusForbidden, ErrCodePermissionDenied, "tenant admin access required")
 	}
 
 	return c.Next()

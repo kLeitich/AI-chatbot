@@ -138,7 +138,7 @@ func requirePermission(perm string) fiber.Handler {
 		}
 
 		if !hasPermission(c, perm) {
-			return fiber.NewError(fiber.StatusForbidden, fmt.Sprintf("permission denied: missing '%s'", perm))
+			return sendError(c, fiber.StatusForbidden, ErrCodePermissionDenied, fmt.Sprintf("permission denied: missing '%s'", perm))
 		}
 
 		return c.Next()
@@ -243,12 +243,15 @@ func createTenantUserHandler(c *fiber.Ctx) error {
 		permsToAssign = PermissionPresets["viewer"]
 	}
 
-	// Validate permissions
+	// Validate permissions: unknown permissions return 400 VALIDATION_ERROR instead of being dropped
 	cleanPerms := make([]string, 0, len(permsToAssign))
 	seen := make(map[string]bool)
 	for _, p := range permsToAssign {
 		p = strings.TrimSpace(p)
-		if ValidPermissionsMap[p] && !seen[p] {
+		if !ValidPermissionsMap[p] {
+			return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, fmt.Sprintf("unknown permission '%s'", p))
+		}
+		if !seen[p] {
 			cleanPerms = append(cleanPerms, p)
 			seen[p] = true
 		}
@@ -354,7 +357,10 @@ func updateUserPermissionsHandler(c *fiber.Ctx) error {
 	seen := make(map[string]bool)
 	for _, p := range permsToAssign {
 		p = strings.TrimSpace(p)
-		if ValidPermissionsMap[p] && !seen[p] {
+		if !ValidPermissionsMap[p] {
+			return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, fmt.Sprintf("unknown permission '%s'", p))
+		}
+		if !seen[p] {
 			cleanPerms = append(cleanPerms, p)
 			seen[p] = true
 		}

@@ -1,6 +1,22 @@
 "use client"
-export default function AppointmentTable({ appointments, onEdit, onDelete, canEdit = true, canDelete = true }) {
-  const hasActions = canEdit || canDelete
+const statusStyles = {
+  confirmed: 'bg-emerald-100 text-emerald-800 border border-emerald-300',
+  pending: 'bg-amber-100 text-amber-800 border border-amber-300',
+  cancelled: 'bg-rose-100 text-rose-800 border border-rose-300',
+  completed: 'bg-blue-100 text-blue-800 border border-blue-300',
+  no_show: 'bg-purple-100 text-purple-800 border border-purple-300',
+}
+
+export default function AppointmentTable({
+  appointments,
+  onEdit,
+  onCancel,
+  onDelete,
+  canEdit = true,
+  canCancel = false,
+  canDelete = true,
+}) {
+  const hasActions = canEdit || canCancel || canDelete
 
   return (
     <div className="overflow-x-auto border rounded bg-white shadow">
@@ -34,22 +50,38 @@ export default function AppointmentTable({ appointments, onEdit, onDelete, canEd
                 <Td>{a.time}</Td>
                 <Td>{a.reason}</Td>
                 <Td>
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                    a.status === 'confirmed' ? 'bg-green-100 text-green-800' :
-                    a.status === 'cancelled' ? 'bg-red-100 text-red-800' :
-                    'bg-yellow-100 text-yellow-800'
+                  <span className={`px-2 py-0.5 rounded text-xs font-semibold uppercase tracking-wider ${
+                    statusStyles[a.status] || 'bg-gray-100 text-gray-800'
                   }`}>
-                    {a.status}
+                    {a.status === 'no_show' ? 'No Show' : a.status}
                   </span>
                 </Td>
                 {hasActions && (
                   <Td>
                     <div className="flex gap-2">
                       {canEdit && (
-                        <button className="px-2 py-1 rounded bg-yellow-500 hover:bg-yellow-600 text-white" onClick={() => onEdit(a)}>Edit</button>
+                        <button
+                          className="px-2 py-1 rounded bg-yellow-500 hover:bg-yellow-600 text-white text-xs font-medium"
+                          onClick={() => onEdit(a)}
+                        >
+                          Edit
+                        </button>
+                      )}
+                      {canCancel && a.status !== 'cancelled' && (
+                        <button
+                          className="px-2 py-1 rounded bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium"
+                          onClick={() => onCancel && onCancel(a)}
+                        >
+                          Cancel
+                        </button>
                       )}
                       {canDelete && (
-                        <button className="px-2 py-1 rounded bg-red-600 hover:bg-red-700 text-white" onClick={() => onDelete(a)}>Delete</button>
+                        <button
+                          className="px-2 py-1 rounded bg-red-600 hover:bg-red-700 text-white text-xs font-medium"
+                          onClick={() => onDelete(a)}
+                        >
+                          Delete
+                        </button>
                       )}
                     </div>
                   </Td>

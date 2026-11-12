@@ -22,7 +22,7 @@ func setupAuthTestApp(t *testing.T) (*fiber.App, uint, string) {
 	dbPath := filepath.Join(tempDir, "auth_test.db")
 	tenantID := initDatabase(dbPath, "development")
 
-	app := fiber.New()
+	app := fiber.New(fiber.Config{ErrorHandler: customErrorHandler})
 
 	app.Post("/auth/register", companyRegisterHandler)
 	app.Post("/auth/platform/login", platformLoginHandler)
@@ -34,7 +34,6 @@ func setupAuthTestApp(t *testing.T) (*fiber.App, uint, string) {
 	platform.Get("/users", listUsers)
 
 	tenant := app.Group("/t/:tenant")
-	tenant.Post("/register", registerHandler)
 	tenant.Post("/login", loginHandler)
 	tenant.Post("/change-password", jwtMiddleware, changePasswordHandler)
 
@@ -194,29 +193,20 @@ func TestRoleInjectionPrevented(t *testing.T) {
 		t.Fatalf("Expected RoleTenantAdmin, got %q", registeredAdmin.Role)
 	}
 
-	// 2. Tenant self-registration cannot set role
+	// 2. Tenant self-registration endpoint /t/:tenant/register must NOT exist (404 Not Found)
 	bodyUser := map[string]string{
 		"email":    "malicious@example.com",
 		"password": "Password12345!",
-		"role":     "platform_admin", // Malicious injection
 	}
 	b2, _ := json.Marshal(bodyUser)
 	req2 := httptest.NewRequest("POST", fmt.Sprintf("/t/%s/register", tenantSlug), bytes.NewReader(b2))
 	req2.Header.Set("Content-Type", "application/json")
 	resp2, err := app.Test(req2, 10000)
 	if err != nil {
-		t.Fatalf("Tenant user register request failed: %v", err)
+		t.Fatalf("Tenant register request failed: %v", err)
 	}
-	if resp2.StatusCode != http.StatusCreated {
-		t.Fatalf("Tenant user register status: %d", resp2.StatusCode)
-	}
-
-	var registeredStaff User
-	if err := db.Where("email = ?", "malicious@example.com").First(&registeredStaff).Error; err != nil {
-		t.Fatalf("Registered staff not found: %v", err)
-	}
-	if registeredStaff.Role != RoleStaff {
-		t.Fatalf("Expected RoleStaff, got %q", registeredStaff.Role)
+	if resp2.StatusCode != http.StatusNotFound {
+		t.Fatalf("Expected 404 Not Found for removed /t/:tenant/register route, got status: %d", resp2.StatusCode)
 	}
 
 	// 3. Tenant admin user creation cannot set role
@@ -321,16 +311,21 @@ func TestTokenBoundariesAndRevocation(t *testing.T) {
 		t.Fatalf("Tenant admin should access their tenant admin route, got code %d", resp4.StatusCode)
 	}
 
-	// 5. Disabled account is immediately rejected (403 Forbidden)
+	// 5. Disabled account is immediately rejected with 401 Unauthorized and ACCOUNT_DISABLED
 	db.Model(&User{}).Where("id = ?", tenantAdminUser.ID).Update("status", "disabled")
 	req5 := httptest.NewRequest("GET", fmt.Sprintf("/t/%s/admin/appointments", tenantSlug), nil)
 	req5.Header.Set("Authorization", "Bearer "+tenantAdminTok)
 	resp5, err := app.Test(req5, 10000)
-	if err != nil || resp5.StatusCode != http.StatusForbidden {
-		t.Fatalf("Disabled user token should be rejected with 403 Forbidden, got code %d", resp5.StatusCode)
+	if err != nil || resp5.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("Disabled user token should be rejected with 401 Unauthorized, got code %d", resp5.StatusCode)
+	}
+	var errBody5 map[string]interface{}
+	json.NewDecoder(resp5.Body).Decode(&errBody5)
+	if errBody5["code"] != ErrCodeAccountDisabled {
+		t.Fatalf("Expected error code %s for disabled account, got %v", ErrCodeAccountDisabled, errBody5["code"])
 	}
 
-	// Re-enable user, but bump token_version -> token is revoked (401 Unauthorized)
+	// Re-enable user, but bump token_version -> token is revoked (401 Unauthorized and TOKEN_REVOKED)
 	db.Model(&User{}).Where("id = ?", tenantAdminUser.ID).Updates(map[string]interface{}{
 		"status":        "active",
 		"token_version": 2,
@@ -341,4 +336,120 @@ func TestTokenBoundariesAndRevocation(t *testing.T) {
 	if err != nil || resp6.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("Stale token_version should be rejected with 401 Unauthorized, got code %d", resp6.StatusCode)
 	}
+	var errBody6 map[string]interface{}
+	json.NewDecoder(resp6.Body).Decode(&errBody6)
+	if errBody6["code"] != ErrCodeTokenRevoked {
+		t.Fatalf("Expected error code %s for revoked token, got %v", ErrCodeTokenRevoked, errBody6["code"])
+	}
 }
+
+func TestAuth401Vs403Semantics(t *testing.T) {
+	app, tenantID, tenantSlug := setupAuthTestApp(t)
+
+	user := User{
+		Email:        "staff_semantics@testclinic.internal",
+		Password:     "hashed_test_password",
+		Role:         RoleStaff,
+		Status:       "active",
+		TokenVersion: 1,
+		TenantID:     tenantID,
+	}
+	db.Create(&user)
+
+	// 1. Expired token -> 401 Unauthorized with ErrCodeTokenExpired
+	secret := getJWTSecret()
+	expiredClaims := jwt.MapClaims{
+		"sub":          float64(user.ID),
+		"email":        user.Email,
+		"tenantId":     float64(tenantID),
+		"role":         user.Role,
+		"tokenVersion": float64(user.TokenVersion),
+		"aud":          "tenant_user",
+		"exp":          float64(time.Now().Add(-1 * time.Hour).Unix()),
+	}
+	expiredTok, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, expiredClaims).SignedString(secret)
+
+	reqExp := httptest.NewRequest("GET", fmt.Sprintf("/t/%s/admin/appointments", tenantSlug), nil)
+	reqExp.Header.Set("Authorization", "Bearer "+expiredTok)
+	respExp, err := app.Test(reqExp, 10000)
+	if err != nil || respExp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("Expected 401 for expired token, got %d, err: %v", respExp.StatusCode, err)
+	}
+	var bodyExp map[string]interface{}
+	json.NewDecoder(respExp.Body).Decode(&bodyExp)
+	if bodyExp["code"] != ErrCodeTokenExpired {
+		t.Errorf("Expected code=%s for expired token, got %v", ErrCodeTokenExpired, bodyExp["code"])
+	}
+
+	// 2. Revoked token (token_version mismatch) -> 401 Unauthorized with ErrCodeTokenRevoked
+	staleClaims := jwt.MapClaims{
+		"sub":           float64(user.ID),
+		"email":         user.Email,
+		"tenantId":      float64(tenantID),
+		"role":          user.Role,
+		"token_version": float64(99), // Mismatched version
+		"aud":           "tenant_user",
+		"exp":           float64(time.Now().Add(1 * time.Hour).Unix()),
+	}
+	staleTok, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, staleClaims).SignedString(secret)
+
+	reqStale := httptest.NewRequest("GET", fmt.Sprintf("/t/%s/admin/appointments", tenantSlug), nil)
+	reqStale.Header.Set("Authorization", "Bearer "+staleTok)
+	respStale, err := app.Test(reqStale, 10000)
+	if err != nil || respStale.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("Expected 401 for revoked token, got %d", respStale.StatusCode)
+	}
+	var bodyStale map[string]interface{}
+	json.NewDecoder(respStale.Body).Decode(&bodyStale)
+	if bodyStale["code"] != ErrCodeTokenRevoked {
+		t.Errorf("Expected code=%s for revoked token, got %v", ErrCodeTokenRevoked, bodyStale["code"])
+	}
+
+	// 3. Disabled account -> 401 Unauthorized with ErrCodeAccountDisabled
+	db.Model(&User{}).Where("id = ?", user.ID).Update("status", "disabled")
+	validClaims := jwt.MapClaims{
+		"sub":           float64(user.ID),
+		"email":         user.Email,
+		"tenantId":      float64(tenantID),
+		"role":          user.Role,
+		"token_version": float64(1),
+		"aud":           "tenant_user",
+		"exp":           float64(time.Now().Add(1 * time.Hour).Unix()),
+	}
+	validTok, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, validClaims).SignedString(secret)
+
+	reqDis := httptest.NewRequest("GET", fmt.Sprintf("/t/%s/admin/appointments", tenantSlug), nil)
+	reqDis.Header.Set("Authorization", "Bearer "+validTok)
+	respDis, err := app.Test(reqDis, 10000)
+	if err != nil || respDis.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("Expected 401 for disabled account, got %d", respDis.StatusCode)
+	}
+	var bodyDis map[string]interface{}
+	json.NewDecoder(respDis.Body).Decode(&bodyDis)
+	if bodyDis["code"] != ErrCodeAccountDisabled {
+		t.Errorf("Expected code=%s for disabled account, got %v", ErrCodeAccountDisabled, bodyDis["code"])
+	}
+
+	// 4. Cross-tenant access -> 403 Forbidden with ErrCodePermissionDenied
+	otherTenant := Tenant{
+		Slug: "otherclinic",
+		Name: "Other Clinic",
+	}
+	db.Create(&otherTenant)
+
+	// Re-enable user
+	db.Model(&User{}).Where("id = ?", user.ID).Update("status", "active")
+
+	reqWrongTenant := httptest.NewRequest("GET", "/t/otherclinic/admin/appointments", nil)
+	reqWrongTenant.Header.Set("Authorization", "Bearer "+validTok)
+	respWrongTenant, err := app.Test(reqWrongTenant, 10000)
+	if err != nil || respWrongTenant.StatusCode != http.StatusForbidden {
+		t.Fatalf("Expected 403 Forbidden for cross-tenant access, got %d", respWrongTenant.StatusCode)
+	}
+	var bodyWrongTenant map[string]interface{}
+	json.NewDecoder(respWrongTenant.Body).Decode(&bodyWrongTenant)
+	if bodyWrongTenant["code"] != ErrCodePermissionDenied {
+		t.Errorf("Expected code=%s for cross-tenant access, got %v", ErrCodePermissionDenied, bodyWrongTenant["code"])
+	}
+}
+

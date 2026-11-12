@@ -78,6 +78,7 @@ type Doctor struct {
 	WorkStart   string    `gorm:"size:5;default:'09:00'" json:"work_start"`
 	WorkEnd     string    `gorm:"size:5;default:'17:00'" json:"work_end"`
 	SlotMinutes int       `gorm:"default:30" json:"slot_minutes"`
+	Active      bool      `gorm:"default:true" json:"active"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -98,6 +99,7 @@ type ReasonOption struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	TenantID  uint      `gorm:"index" json:"tenant_id"`
 	Label     string    `gorm:"size:255;not null" json:"label"`
+	Active    bool      `gorm:"default:true" json:"active"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -108,10 +110,13 @@ type ChatRequest struct {
 }
 
 type ChatResponse struct {
-	Message     string       `json:"message,omitempty"`
-	Reply       string       `json:"reply,omitempty"`
-	SessionID   string       `json:"session_id,omitempty"`
-	Appointment *Appointment `json:"appointment,omitempty"`
+	Message           string       `json:"message,omitempty"`
+	Reply             string       `json:"reply,omitempty"`
+	SessionID         string       `json:"session_id,omitempty"`
+	Appointment       *Appointment `json:"appointment,omitempty"`
+	Emergency         bool         `json:"emergency,omitempty"`
+	EmergencyCategory string       `json:"emergency_category,omitempty"`
+	EmergencyNumber   string       `json:"emergency_number,omitempty"`
 }
 
 // In-memory conversation state per session

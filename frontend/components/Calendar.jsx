@@ -2,7 +2,6 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
 
 function startOfMonth(date) { const d = new Date(date.getFullYear(), date.getMonth(), 1); return d }
-function endOfMonth(date) { const d = new Date(date.getFullYear(), date.getMonth() + 1, 0); return d }
 function startOfWeek(date) { const d = new Date(date); const day = d.getDay(); d.setDate(d.getDate() - day); d.setHours(0,0,0,0); return d }
 function addDays(date, n) { const d = new Date(date); d.setDate(d.getDate() + n); return d }
 function addMonths(date, n) { const d = new Date(date); d.setMonth(d.getMonth() + n); return d }
@@ -14,9 +13,30 @@ function weekLabel(date) { const s=startOfWeek(date); const e=addDays(s,6); cons
 const HOURS = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`)
 const SLOT_PX = 48
 function weekdayWithDate(d){ const name=d.toLocaleDateString(undefined,{weekday:'short'}); return `${name} ${d.getDate()}` }
-function colorFor(ap){ if(!ap) return 'bg-sky-500'; if(ap.status==='cancelled') return 'bg-gray-500'; if(ap.status==='confirmed') return 'bg-emerald-500'; const key=(ap.doctor||ap.patient_name||'').toLowerCase(); let hash=0; for(let i=0;i<key.length;i++) hash=(hash*31+key.charCodeAt(i))>>>0; const palette=['bg-sky-500','bg-indigo-500','bg-purple-500','bg-pink-500','bg-rose-500','bg-orange-500','bg-amber-500','bg-lime-500','bg-teal-500','bg-cyan-500']; return palette[hash%palette.length] }
+function colorFor(ap){
+  if(!ap) return 'bg-sky-500'
+  if(ap.status==='cancelled') return 'bg-gray-400 line-through'
+  if(ap.status==='confirmed') return 'bg-emerald-600'
+  if(ap.status==='pending') return 'bg-amber-500'
+  if(ap.status==='completed') return 'bg-blue-600'
+  if(ap.status==='no_show') return 'bg-purple-600'
+  return 'bg-sky-500'
+}
 
-export default function Calendar({ date = new Date(), view = 'month', appointments = [], onAdd, onEdit, onDelete, onChangeDate }) {
+export default function Calendar({
+  date = new Date(),
+  view = 'month',
+  appointments = [],
+  onAdd,
+  onEdit,
+  onCancel,
+  onDelete,
+  onChangeDate,
+  canCreate = true,
+  canEdit = true,
+  canCancel = false,
+  canDelete = true,
+}) {
   const [now, setNow] = useState(new Date())
   const scrollRef = useRef(null)
   useEffect(()=>{ const id=setInterval(()=>setNow(new Date()),60*1000); return ()=>clearInterval(id) },[])
@@ -32,6 +52,8 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
 
   const minuteOfDay=now.getHours()*60+now.getMinutes(); const nowTopPx=(minuteOfDay/(24*60))*(HOURS.length*SLOT_PX)
   useEffect(()=>{ if(view!=='week') return; const start=new Date(gridStart); const end=addDays(start,7); if(now>=start&&now<end&&scrollRef.current){ const target=Math.max(0,nowTopPx-200); scrollRef.current.scrollTo({top:target,behavior:'smooth'}) } },[view,gridStart,nowTopPx,now])
+
+  const canClickCell = Boolean(onAdd && canCreate)
 
   return (
     <div className="border rounded bg-white text-gray-900 shadow">
@@ -59,12 +81,31 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
                     <div className="text-xs font-semibold text-gray-700">{d.getDate()}</div>
                   </div>
                   <div className="space-y-1">
-                    {dayAps.map((ap)=>(
-                      <div key={ap.id ?? `${ap.date}-${ap.time}-${ap.patient_name}`} className={`text-xs ${colorFor(ap)} text-white/90 rounded px-2 py-1 flex items-center justify-between`}>
-                        <div className="truncate"><span className="font-medium">{ap.time}</span> • {ap.patient_name} ({ap.doctor})</div>
-                        <div className="flex gap-1 ml-2 flex-shrink-0"><button className="opacity-90 hover:opacity-100" title="Edit" onClick={()=>onEdit&&onEdit(ap)}>✏️</button><button className="opacity-90 hover:opacity-100" title="Delete" onClick={()=>onDelete&&onDelete(ap)}>🗑️</button></div>
-                      </div>
-                    ))}
+                    {dayAps.map((ap)=>{
+                      const showEdit = Boolean(onEdit && canEdit)
+                      const showCancel = Boolean(onCancel && canCancel && ap.status !== 'cancelled')
+                      const showDelete = Boolean(onDelete && canDelete)
+                      const hasItemActions = showEdit || showCancel || showDelete
+
+                      return (
+                        <div key={ap.id ?? `${ap.date}-${ap.time}-${ap.patient_name}`} className={`text-xs ${colorFor(ap)} text-white/90 rounded px-2 py-1 flex items-center justify-between`}>
+                          <div className="truncate"><span className="font-medium">{ap.time}</span> • {ap.patient_name} ({ap.doctor})</div>
+                          {hasItemActions && (
+                            <div className="flex gap-1 ml-2 flex-shrink-0">
+                              {showEdit && (
+                                <button className="opacity-90 hover:opacity-100" title="Edit" onClick={()=>onEdit(ap)}>✏️</button>
+                              )}
+                              {showCancel && (
+                                <button className="opacity-90 hover:opacity-100 text-xs" title="Cancel" onClick={()=>onCancel(ap)}>❌</button>
+                              )}
+                              {showDelete && (
+                                <button className="opacity-90 hover:opacity-100" title="Delete" onClick={()=>onDelete(ap)}>🗑️</button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               )
@@ -83,21 +124,57 @@ export default function Calendar({ date = new Date(), view = 'month', appointmen
             )}
             <div className="grid" style={{gridTemplateColumns:'100px repeat(7, 1fr)'}}>
               {HOURS.map((h)=>(
-                <>
+                <div key={`row-${h}`} className="contents">
                   <div key={`h-${h}`} className="border-r p-2 text-xs h-12 leading-[48px] text-gray-500 border-gray-200">{h}</div>
-                  {Array.from({length:7}).map((_,dayIdx)=>{ const day=addDays(gridStart,dayIdx); const key=ymd(day); const items=(apByDate[key]||[]).filter((ap)=>ap.time?.startsWith(h)); const onCellClick=(e)=>{ if(!onAdd) return; const rect=e.currentTarget.getBoundingClientRect(); const y=e.clientY-rect.top; const minute=y<rect.height/2?'00':'30'; const hh=h.slice(0,2); onAdd({date:key,time:`${hh}:${minute}`,patient_name:'',doctor:'',reason:'',status:'pending'})}; return (
-                    <div key={`${key}-${h}`} className="border h-12 p-1 cursor-crosshair hover:bg-gray-50/70 border-gray-200" onClick={onCellClick}>
-                      <div className="flex flex-col gap-1 pointer-events-none">
-                        {items.map((ap)=>(
-                          <div key={ap.id ?? `${ap.date}-${ap.time}-${ap.patient_name}`} className={`text-xs ${colorFor(ap)} text-white/90 rounded px-2 py-1 flex items-center justify-between`}>
-                            <div className="truncate"><span className="font-medium">{ap.time}</span> • {ap.patient_name}</div>
-                            <div className="flex gap-1 ml-2 flex-shrink-0"><button className="pointer-events-auto opacity-90 hover:opacity-100" title="Edit" onClick={(ev)=>{ev.stopPropagation(); onEdit&&onEdit(ap)}}>✏️</button><button className="pointer-events-auto opacity-90 hover:opacity-100" title="Delete" onClick={(ev)=>{ev.stopPropagation(); onDelete&&onDelete(ap)}}>🗑️</button></div>
-                          </div>
-                        ))}
+                  {Array.from({length:7}).map((_,dayIdx)=>{
+                    const day=addDays(gridStart,dayIdx)
+                    const key=ymd(day)
+                    const items=(apByDate[key]||[]).filter((ap)=>ap.time?.startsWith(h))
+                    const onCellClick=(e)=>{
+                      if(!canClickCell) return
+                      const rect=e.currentTarget.getBoundingClientRect()
+                      const y=e.clientY-rect.top
+                      const minute=y<rect.height/2?'00':'30'
+                      const hh=h.slice(0,2)
+                      onAdd({date:key,time:`${hh}:${minute}`,patient_name:'',doctor:'',reason:'',status:'pending'})
+                    }
+                    return (
+                      <div
+                        key={`${key}-${h}`}
+                        className={`border h-12 p-1 border-gray-200 ${canClickCell ? 'cursor-crosshair hover:bg-gray-50/70' : 'cursor-default'}`}
+                        onClick={canClickCell ? onCellClick : undefined}
+                      >
+                        <div className="flex flex-col gap-1 pointer-events-none">
+                          {items.map((ap)=>{
+                            const showEdit = Boolean(onEdit && canEdit)
+                            const showCancel = Boolean(onCancel && canCancel && ap.status !== 'cancelled')
+                            const showDelete = Boolean(onDelete && canDelete)
+                            const hasItemActions = showEdit || showCancel || showDelete
+
+                            return (
+                              <div key={ap.id ?? `${ap.date}-${ap.time}-${ap.patient_name}`} className={`text-xs ${colorFor(ap)} text-white/90 rounded px-2 py-1 flex items-center justify-between`}>
+                                <div className="truncate"><span className="font-medium">{ap.time}</span> • {ap.patient_name}</div>
+                                {hasItemActions && (
+                                  <div className="flex gap-1 ml-2 flex-shrink-0">
+                                    {showEdit && (
+                                      <button className="pointer-events-auto opacity-90 hover:opacity-100" title="Edit" onClick={(ev)=>{ev.stopPropagation(); onEdit(ap)}}>✏️</button>
+                                    )}
+                                    {showCancel && (
+                                      <button className="pointer-events-auto opacity-90 hover:opacity-100 text-xs" title="Cancel" onClick={(ev)=>{ev.stopPropagation(); onCancel(ap)}}>❌</button>
+                                    )}
+                                    {showDelete && (
+                                      <button className="pointer-events-auto opacity-90 hover:opacity-100" title="Delete" onClick={(ev)=>{ev.stopPropagation(); onDelete(ap)}}>🗑️</button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  )})}
-                </>
+                    )
+                  })}
+                </div>
               ))}
             </div>
           </div>

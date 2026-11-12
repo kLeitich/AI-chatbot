@@ -1,6 +1,9 @@
-import { redirect } from 'next/navigation'
+import { redirect, notFound } from 'next/navigation'
 
 export default function Page() {
-  // Backwards-compat: send /admin/login to default tenant login
-  redirect('/t/default/login')
+  // Legacy route: redirect to /t/default only in development; in production return 404
+  if (process.env.NODE_ENV !== 'production') {
+    redirect('/t/default/login')
+  }
+  notFound()
 }

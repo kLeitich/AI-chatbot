@@ -238,3 +238,111 @@ func TestChatValidateAtConfirmTime(t *testing.T) {
 	}
 }
 
+func TestChatEmergencyResponseFlags(t *testing.T) {
+	app, sessionID := setupTestApp(t)
+
+	// Send an emergency message
+	reqBody, _ := json.Marshal(ChatRequest{
+		Message:   "I have severe chest pain and cannot breathe",
+		SessionID: sessionID,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/t/default/chat", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	var chatResp ChatResponse
+	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
+		t.Fatalf("Failed to parse JSON response: %v", err)
+	}
+
+	if !chatResp.Emergency {
+		t.Errorf("Expected emergency=true, got false")
+	}
+	if chatResp.EmergencyCategory != "chest_pain" && chatResp.EmergencyCategory != "difficulty_breathing" {
+		t.Errorf("Expected emergency category to be chest_pain or difficulty_breathing, got: %s", chatResp.EmergencyCategory)
+	}
+	if chatResp.EmergencyNumber != "999" {
+		t.Errorf("Expected emergency_number='999' by default, got: %s", chatResp.EmergencyNumber)
+	}
+	if chatResp.Appointment != nil {
+		t.Errorf("Expected appointment to be nil on emergency path, got: %+v", chatResp.Appointment)
+	}
+
+	// Verify non-emergency message does NOT set emergency flag
+	reqBodyNorm, _ := json.Marshal(ChatRequest{
+		Message:   "Hi, my name is Kevin",
+		SessionID: sessionID,
+	})
+	reqNorm := httptest.NewRequest(http.MethodPost, "/t/default/chat", bytes.NewReader(reqBodyNorm))
+	reqNorm.Header.Set("Content-Type", "application/json")
+
+	respNorm, err := app.Test(reqNorm, 5000)
+	if err != nil {
+		t.Fatalf("Normal request failed: %v", err)
+	}
+	var normResp ChatResponse
+	_ = json.NewDecoder(respNorm.Body).Decode(&normResp)
+	if normResp.Emergency {
+		t.Errorf("Expected emergency=false on normal turn, got true")
+	}
+	if normResp.EmergencyCategory != "" || normResp.EmergencyNumber != "" {
+		t.Errorf("Expected empty emergency fields on normal turn, got category=%s, number=%s",
+			normResp.EmergencyCategory, normResp.EmergencyNumber)
+	}
+}
+
+func TestChatInactiveDoctorRejected(t *testing.T) {
+	app, sessionID := setupTestApp(t)
+
+	// Create an inactive doctor in default tenant (tenantID = 1)
+	inactiveDoc := Doctor{
+		TenantID:  1,
+		Name:      "Dr. Ghost",
+		WorkDays:  "Mon,Tue,Wed,Thu,Fri",
+		WorkStart: "09:00",
+		WorkEnd:   "17:00",
+		Active:    false,
+	}
+	db.Create(&inactiveDoc)
+	db.Model(&inactiveDoc).Update("active", false)
+
+	// Expecting doctor
+	convKey := "default:" + sessionID
+	setConversation(convKey, ConversationState{
+		Expecting: "doctor",
+		Draft: Appointment{
+			TenantID:    1,
+			PatientName: "Alice",
+		},
+	})
+
+	// Send inactive doctor name
+	reqBody, _ := json.Marshal(ChatRequest{
+		Message:   "Dr. Ghost",
+		SessionID: sessionID,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/t/default/chat", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+
+	var chatResp ChatResponse
+	_ = json.NewDecoder(resp.Body).Decode(&chatResp)
+
+	// Reply must state couldn't find doctor and list active doctors
+	if !strings.Contains(strings.ToLower(chatResp.Reply), "couldn't find a doctor") {
+		t.Errorf("Expected reply to reject inactive doctor, got: %s", chatResp.Reply)
+	}
+	if strings.Contains(chatResp.Reply, "Dr. Ghost") && !strings.Contains(chatResp.Reply, "couldn't find") {
+		t.Errorf("Inactive doctor should not be listed as available, got: %s", chatResp.Reply)
+	}
+}
+

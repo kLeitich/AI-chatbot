@@ -1,15 +1,25 @@
 "use client"
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import api from '../lib/api'
 
 export default function AdminLogin({ tenant = 'default' }) {
-  const [email, setEmail] = useState('admin@example.com')
-  const [password, setPassword] = useState('admin123')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(false)
   const router = useRouter()
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      if (params.get('notice') === 'session_ended' || params.get('session_ended')) {
+        setNotice('Your session has ended. Please sign in again.')
+      }
+    }
+  }, [])
 
   const submit = async (e) => {
     e.preventDefault()
@@ -34,6 +44,7 @@ export default function AdminLogin({ tenant = 'default' }) {
     <div className="min-h-screen grid place-items-center p-4">
       <form onSubmit={submit} className="bg-white border rounded p-6 w-full max-w-sm shadow space-y-3">
         <h2 className="text-xl font-semibold">Admin Login</h2>
+        {notice && <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded p-2 text-xs font-medium">{notice}</p>}
         <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="Email" className="w-full border rounded p-2" />
         <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="Password" className="w-full border rounded p-2" />
         {error && <p className="text-red-600 text-sm">{error}</p>}

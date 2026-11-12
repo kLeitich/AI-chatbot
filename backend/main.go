@@ -79,7 +79,9 @@ func main() {
 	// Bootstrap platform admin if zero exist and credentials provided
 	bootstrapPlatformAdmin(appEnv)
 
-	fiberConfig := fiber.Config{}
+	fiberConfig := fiber.Config{
+		ErrorHandler: customErrorHandler,
+	}
 	if strings.EqualFold(getEnv("TRUST_PROXY", "false"), "true") {
 		fiberConfig.ProxyHeader = "X-Forwarded-For"
 		log.Println("[config] TRUST_PROXY=true: enabled X-Forwarded-For proxy header tracking")
@@ -160,7 +162,6 @@ func main() {
 	// Tenant-scoped API under /t/:tenant/...
 	tenant := app.Group("/t/:tenant")
 	tenant.Post("/chat", chatLimiter, chatHandler)
-	tenant.Post("/register", authLimiter, registerHandler)
 	tenant.Post("/login", authLimiter, loginHandler)
 	tenant.Post("/change-password", jwtMiddleware, changePasswordHandler)
 	tenant.Get("/me", jwtMiddleware, tenantUserMiddleware, getTenantMeHandler)
@@ -177,8 +178,12 @@ func main() {
 	admin.Delete("/appointments/:id", requirePermission(PermAppointmentsDelete), deleteAppointment)
 	admin.Get("/doctors", requirePermission(PermDoctorsView), listDoctors)
 	admin.Post("/doctors", requirePermission(PermDoctorsManage), createDoctor)
+	admin.Patch("/doctors/:id", requirePermission(PermDoctorsManage), patchDoctor)
 	admin.Get("/reasons", listReasons)
 	admin.Post("/reasons", requirePermission(PermReasonsManage), createReason)
+	admin.Patch("/reasons/:id", requirePermission(PermReasonsManage), patchReason)
+	admin.Get("/settings", requirePermission(PermSettingsManage), getTenantSettingsHandler)
+	admin.Patch("/settings", requirePermission(PermSettingsManage), updateTenantSettingsHandler)
 
 	// Tenant admin user management endpoints (tenant_admin role strictly required)
 	admin.Get("/permissions", tenantAdminMiddleware, listPermissionsHandler)
