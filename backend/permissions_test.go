@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
@@ -32,6 +33,8 @@ func setupPermissionsTestApp(t *testing.T) (*fiber.App, uint, string, string, Us
 	admin.Delete("/appointments/:id", requirePermission(PermAppointmentsDelete), deleteAppointment)
 	admin.Get("/doctors", requirePermission(PermDoctorsView), listDoctors)
 	admin.Post("/doctors", requirePermission(PermDoctorsManage), createDoctor)
+	admin.Get("/settings", requirePermission(PermSettingsManage), getTenantSettingsHandler)
+	admin.Patch("/settings", requirePermission(PermSettingsManage), updateTenantSettingsHandler)
 
 	admin.Get("/permissions", tenantAdminMiddleware, listPermissionsHandler)
 	admin.Get("/users", tenantAdminMiddleware, listTenantUsersHandler)
@@ -376,6 +379,87 @@ func TestDataMigrationToPermissions(t *testing.T) {
 	permsU1, _ := getUserPermissions(u1.ID)
 	if len(permsU1) != 2 {
 		t.Errorf("Expected 2 permissions (viewer) for migrated user, got %d", len(permsU1))
+	}
+}
+
+func TestTenantSettingsPermissionsAndValidation(t *testing.T) {
+	app, tenantID, tenantSlug, adminTok, _ := setupPermissionsTestApp(t)
+
+	// Create staff user with NO settings.manage permission
+	staffNoPerm := User{Email: "staff_no_settings@clinic.internal", Role: RoleStaff, TenantID: tenantID, Status: "active", TokenVersion: 1}
+	db.Create(&staffNoPerm)
+	staffNoPermTok, _ := createTenantJWTToken(staffNoPerm.ID, staffNoPerm.Email, tenantID, RoleStaff, 1)
+
+	// 1. Staff without settings.manage receives 403 Forbidden
+	reqNoPerm := httptest.NewRequest("GET", fmt.Sprintf("/t/%s/admin/settings", tenantSlug), nil)
+	reqNoPerm.Header.Set("Authorization", "Bearer "+staffNoPermTok)
+	respNoPerm, _ := app.Test(reqNoPerm, 10000)
+	if respNoPerm.StatusCode != http.StatusForbidden {
+		t.Fatalf("Expected 403 Forbidden for staff without settings.manage, got %d", respNoPerm.StatusCode)
+	}
+
+	// 2. Tenant admin can GET settings
+	reqGet := httptest.NewRequest("GET", fmt.Sprintf("/t/%s/admin/settings", tenantSlug), nil)
+	reqGet.Header.Set("Authorization", "Bearer "+adminTok)
+	respGet, err := app.Test(reqGet, 10000)
+	if err != nil || respGet.StatusCode != http.StatusOK {
+		t.Fatalf("Tenant admin failed to get settings, err: %v, status: %d", err, respGet.StatusCode)
+	}
+
+	// 3. Validation: invalid emergency number (letters not allowed)
+	badNumBody := map[string]string{
+		"emergency_number": "112-CALL-NOW",
+	}
+	bBadNum, _ := json.Marshal(badNumBody)
+	reqBadNum := httptest.NewRequest("PATCH", fmt.Sprintf("/t/%s/admin/settings", tenantSlug), bytes.NewReader(bBadNum))
+	reqBadNum.Header.Set("Content-Type", "application/json")
+	reqBadNum.Header.Set("Authorization", "Bearer "+adminTok)
+	respBadNum, _ := app.Test(reqBadNum, 10000)
+	if respBadNum.StatusCode != http.StatusBadRequest {
+		t.Fatalf("Expected 400 for emergency number with invalid characters, got %d", respBadNum.StatusCode)
+	}
+
+	// 4. Validation: emergency message > 500 chars rejected
+	tooLongMsg := strings.Repeat("Emergency notice details! ", 30) // > 500 chars
+	badMsgBody := map[string]string{
+		"emergency_message": tooLongMsg,
+	}
+	bBadMsg, _ := json.Marshal(badMsgBody)
+	reqBadMsg := httptest.NewRequest("PATCH", fmt.Sprintf("/t/%s/admin/settings", tenantSlug), bytes.NewReader(bBadMsg))
+	reqBadMsg.Header.Set("Content-Type", "application/json")
+	reqBadMsg.Header.Set("Authorization", "Bearer "+adminTok)
+	respBadMsg, _ := app.Test(reqBadMsg, 10000)
+	if respBadMsg.StatusCode != http.StatusBadRequest {
+		t.Fatalf("Expected 400 for emergency message exceeding 500 chars, got %d", respBadMsg.StatusCode)
+	}
+
+	// 5. Valid PATCH settings succeeds and writes audit log without content
+	validBody := map[string]string{
+		"emergency_number":  "+254 700 000000",
+		"emergency_message": "For severe emergencies, please visit the emergency wing or call our hotline.",
+	}
+	bValid, _ := json.Marshal(validBody)
+	reqValid := httptest.NewRequest("PATCH", fmt.Sprintf("/t/%s/admin/settings", tenantSlug), bytes.NewReader(bValid))
+	reqValid.Header.Set("Content-Type", "application/json")
+	reqValid.Header.Set("Authorization", "Bearer "+adminTok)
+	respValid, err := app.Test(reqValid, 10000)
+	if err != nil || respValid.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 on valid settings patch, err: %v, status: %d", err, respValid.StatusCode)
+	}
+
+	var res TenantSettings
+	json.NewDecoder(respValid.Body).Decode(&res)
+	if res.EmergencyNumber != "+254 700 000000" {
+		t.Errorf("Expected emergency_number='+254 700 000000', got %s", res.EmergencyNumber)
+	}
+
+	// Verify audit log entry exists without message content
+	var audit AuditLog
+	if err := db.Where("action = ? AND entity = ?", "update", "settings").First(&audit).Error; err != nil {
+		t.Fatalf("Expected audit log for settings update, got err: %v", err)
+	}
+	if audit.TenantID != tenantID {
+		t.Errorf("Expected audit tenantID=%d, got %d", tenantID, audit.TenantID)
 	}
 }
 

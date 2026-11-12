@@ -180,6 +180,8 @@ func main() {
 	admin.Post("/doctors", requirePermission(PermDoctorsManage), createDoctor)
 	admin.Get("/reasons", listReasons)
 	admin.Post("/reasons", requirePermission(PermReasonsManage), createReason)
+	admin.Get("/settings", requirePermission(PermSettingsManage), getTenantSettingsHandler)
+	admin.Patch("/settings", requirePermission(PermSettingsManage), updateTenantSettingsHandler)
 
 	// Tenant admin user management endpoints (tenant_admin role strictly required)
 	admin.Get("/permissions", tenantAdminMiddleware, listPermissionsHandler)

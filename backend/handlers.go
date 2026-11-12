@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -609,4 +610,73 @@ func choose(a, b string) string {
 		return strings.TrimSpace(a)
 	}
 	return b
+}
+
+type TenantSettings struct {
+	EmergencyNumber  string `json:"emergency_number"`
+	EmergencyMessage string `json:"emergency_message"`
+}
+
+var emergencyNumberRegex = regexp.MustCompile(`^[0-9+ ]{0,20}$`)
+
+func stripControlChars(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= 32 || r == '\n' || r == '\r' || r == '\t' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func getTenantSettingsHandler(c *fiber.Ctx) error {
+	tenantSlug := c.Params("tenant")
+	var tenant Tenant
+	if err := db.Where("slug = ?", tenantSlug).First(&tenant).Error; err != nil {
+		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "tenant not found")
+	}
+
+	return c.JSON(TenantSettings{
+		EmergencyNumber:  tenant.EmergencyNumber,
+		EmergencyMessage: tenant.EmergencyMessage,
+	})
+}
+
+func updateTenantSettingsHandler(c *fiber.Ctx) error {
+	tenantSlug := c.Params("tenant")
+	var tenant Tenant
+	if err := db.Where("slug = ?", tenantSlug).First(&tenant).Error; err != nil {
+		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "tenant not found")
+	}
+
+	var req TenantSettings
+	if err := c.BodyParser(&req); err != nil {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "invalid request body")
+	}
+
+	cleanNum := strings.TrimSpace(req.EmergencyNumber)
+	if len(cleanNum) > 20 || !emergencyNumberRegex.MatchString(cleanNum) {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "emergency_number may only contain digits, '+', and spaces, max 20 characters")
+	}
+
+	cleanMsg := stripControlChars(req.EmergencyMessage)
+	if len(cleanMsg) > 500 {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "emergency_message must be at most 500 characters")
+	}
+
+	tenant.EmergencyNumber = cleanNum
+	tenant.EmergencyMessage = cleanMsg
+
+	if err := db.Save(&tenant).Error; err != nil {
+		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "failed to update settings")
+	}
+
+	userID, _ := c.Locals("user_id").(uint)
+	role, _ := c.Locals("role").(string)
+	recordAuditLog(userID, role, tenant.ID, "update", "settings", tenant.ID, c.IP())
+
+	return c.JSON(TenantSettings{
+		EmergencyNumber:  tenant.EmergencyNumber,
+		EmergencyMessage: tenant.EmergencyMessage,
+	})
 }
