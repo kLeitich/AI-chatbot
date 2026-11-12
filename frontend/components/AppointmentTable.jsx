@@ -1,6 +1,14 @@
 "use client"
-export default function AppointmentTable({ appointments, onEdit, onDelete, canEdit = true, canDelete = true }) {
-  const hasActions = canEdit || canDelete
+export default function AppointmentTable({
+  appointments,
+  onEdit,
+  onCancel,
+  onDelete,
+  canEdit = true,
+  canCancel = false,
+  canDelete = true,
+}) {
+  const hasActions = canEdit || canCancel || canDelete
 
   return (
     <div className="overflow-x-auto border rounded bg-white shadow">
@@ -46,10 +54,28 @@ export default function AppointmentTable({ appointments, onEdit, onDelete, canEd
                   <Td>
                     <div className="flex gap-2">
                       {canEdit && (
-                        <button className="px-2 py-1 rounded bg-yellow-500 hover:bg-yellow-600 text-white" onClick={() => onEdit(a)}>Edit</button>
+                        <button
+                          className="px-2 py-1 rounded bg-yellow-500 hover:bg-yellow-600 text-white text-xs font-medium"
+                          onClick={() => onEdit(a)}
+                        >
+                          Edit
+                        </button>
+                      )}
+                      {canCancel && a.status !== 'cancelled' && (
+                        <button
+                          className="px-2 py-1 rounded bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium"
+                          onClick={() => onCancel && onCancel(a)}
+                        >
+                          Cancel
+                        </button>
                       )}
                       {canDelete && (
-                        <button className="px-2 py-1 rounded bg-red-600 hover:bg-red-700 text-white" onClick={() => onDelete(a)}>Delete</button>
+                        <button
+                          className="px-2 py-1 rounded bg-red-600 hover:bg-red-700 text-white text-xs font-medium"
+                          onClick={() => onDelete(a)}
+                        >
+                          Delete
+                        </button>
                       )}
                     </div>
                   </Td>

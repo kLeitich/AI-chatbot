@@ -92,7 +92,8 @@ export default function AdminDashboard({ tenant = 'default' }) {
   const isTenantAdmin = userProfile?.role === 'tenant_admin'
   const canViewAppointments = can('appointments.view')
   const canCreateAppointments = can('appointments.create')
-  const canEditAppointments = can('appointments.edit') || can('appointments.cancel')
+  const canEditAppointments = can('appointments.edit')
+  const canCancelAppointments = can('appointments.cancel')
   const canDeleteAppointments = can('appointments.delete')
 
   const filtered = useMemo(() => {
@@ -109,6 +110,16 @@ export default function AdminDashboard({ tenant = 'default' }) {
 
   const clearFilters = () => {
     setFPatient(''); setFDoctor(''); setFDate(''); setFTime(''); setFReason(''); setFStatus('')
+  }
+
+  const onCancel = async (a) => {
+    if (!confirm(`Cancel appointment #${a.id}?`)) return
+    try {
+      await api.put(`/t/${tenant}/admin/appointments/${a.id}`, { status: 'cancelled' })
+      loadProfileAndData()
+    } catch (e) {
+      alert(e?.response?.data?.message || 'Failed to cancel appointment')
+    }
   }
 
   const onDelete = async (a) => {
@@ -301,9 +312,11 @@ export default function AdminDashboard({ tenant = 'default' }) {
             ) : view === 'table' ? (
               <AppointmentTable
                 appointments={filtered}
-                onEdit={setEditing}
-                onDelete={onDelete}
+                onEdit={canEditAppointments ? setEditing : undefined}
+                onCancel={canCancelAppointments ? onCancel : undefined}
+                onDelete={canDeleteAppointments ? onDelete : undefined}
                 canEdit={canEditAppointments}
+                canCancel={canCancelAppointments}
                 canDelete={canDeleteAppointments}
               />
             ) : (
@@ -314,7 +327,12 @@ export default function AdminDashboard({ tenant = 'default' }) {
                 appointments={filtered}
                 onAdd={canCreateAppointments ? onAddFromCalendar : undefined}
                 onEdit={canEditAppointments ? setEditing : undefined}
+                onCancel={canCancelAppointments ? onCancel : undefined}
                 onDelete={canDeleteAppointments ? onDelete : undefined}
+                canCreate={canCreateAppointments}
+                canEdit={canEditAppointments}
+                canCancel={canCancelAppointments}
+                canDelete={canDeleteAppointments}
               />
             )}
           </>
