@@ -1,5 +1,5 @@
 "use client"
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import api from '../lib/api'
 
@@ -7,9 +7,19 @@ export default function PlatformLogin() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(false)
   const router = useRouter()
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      if (params.get('notice') === 'session_ended' || params.get('session_ended')) {
+        setNotice('Your session has ended. Please sign in again.')
+      }
+    }
+  }, [])
 
   const submit = async (e) => {
     e.preventDefault()
@@ -42,6 +52,12 @@ export default function PlatformLogin() {
       <form onSubmit={submit} className="w-full max-w-md bg-white rounded-2xl border p-6 shadow-sm space-y-4">
         <h1 className="text-2xl font-semibold text-gray-900">Platform Admin Login</h1>
         <p className="text-sm text-gray-600">Manage all companies and users across the platform.</p>
+
+        {notice && (
+          <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800 font-medium">
+            {notice}
+          </div>
+        )}
 
         <label className="block text-sm font-medium text-gray-700">
           Email
