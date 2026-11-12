@@ -108,10 +108,13 @@ type ChatRequest struct {
 }
 
 type ChatResponse struct {
-	Message     string       `json:"message,omitempty"`
-	Reply       string       `json:"reply,omitempty"`
-	SessionID   string       `json:"session_id,omitempty"`
-	Appointment *Appointment `json:"appointment,omitempty"`
+	Message           string       `json:"message,omitempty"`
+	Reply             string       `json:"reply,omitempty"`
+	SessionID         string       `json:"session_id,omitempty"`
+	Appointment       *Appointment `json:"appointment,omitempty"`
+	Emergency         bool         `json:"emergency,omitempty"`
+	EmergencyCategory string       `json:"emergency_category,omitempty"`
+	EmergencyNumber   string       `json:"emergency_number,omitempty"`
 }
 
 // In-memory conversation state per session

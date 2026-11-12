@@ -58,9 +58,16 @@ func chatHandler(c *fiber.Ctx) error {
 		LogEmergencyDetected(tenantSlug, sessionID, category)
 		// Clear session state and do not save draft
 		setConversation(convKey, ConversationState{})
+		emergencyNum := tenant.EmergencyNumber
+		if strings.TrimSpace(emergencyNum) == "" {
+			emergencyNum = "999"
+		}
 		return c.JSON(ChatResponse{
-			Reply:     EmergencyResponse(tenant, category),
-			SessionID: sessionID,
+			Reply:             EmergencyResponse(tenant, category),
+			SessionID:         sessionID,
+			Emergency:         true,
+			EmergencyCategory: string(category),
+			EmergencyNumber:   emergencyNum,
 		})
 	}
 
