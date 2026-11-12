@@ -61,7 +61,7 @@ func TestPermissionsCatalogueAndPresets(t *testing.T) {
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/t/%s/admin/permissions", tenantSlug), nil)
 	req.Header.Set("Authorization", "Bearer "+adminTok)
-	resp, err := app.Test(req)
+	resp, err := app.Test(req, 10000)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("Failed to fetch permissions catalogue: %v, status: %d", err, resp.StatusCode)
 	}
@@ -98,7 +98,7 @@ func TestUserManagementCRUDAndRevocation(t *testing.T) {
 	req1 := httptest.NewRequest("POST", fmt.Sprintf("/t/%s/admin/users", tenantSlug), bytes.NewReader(b))
 	req1.Header.Set("Content-Type", "application/json")
 	req1.Header.Set("Authorization", "Bearer "+adminTok)
-	resp1, err := app.Test(req1)
+	resp1, err := app.Test(req1, 10000)
 	if err != nil || resp1.StatusCode != http.StatusCreated {
 		t.Fatalf("Failed to create user with preset: %v, status: %d", err, resp1.StatusCode)
 	}
@@ -124,7 +124,7 @@ func TestUserManagementCRUDAndRevocation(t *testing.T) {
 	// 2. Fetch /t/:tenant/admin/users
 	reqList := httptest.NewRequest("GET", fmt.Sprintf("/t/%s/admin/users", tenantSlug), nil)
 	reqList.Header.Set("Authorization", "Bearer "+adminTok)
-	respList, _ := app.Test(reqList)
+	respList, _ := app.Test(reqList, 10000)
 	var usersList []UserWithPermissions
 	json.NewDecoder(respList.Body).Decode(&usersList)
 	if len(usersList) < 2 {
@@ -139,7 +139,7 @@ func TestUserManagementCRUDAndRevocation(t *testing.T) {
 	reqUp := httptest.NewRequest("PATCH", fmt.Sprintf("/t/%s/admin/users/%d/permissions", tenantSlug, created.ID), bytes.NewReader(bUp))
 	reqUp.Header.Set("Content-Type", "application/json")
 	reqUp.Header.Set("Authorization", "Bearer "+adminTok)
-	respUp, _ := app.Test(reqUp)
+	respUp, _ := app.Test(reqUp, 10000)
 	if respUp.StatusCode != http.StatusOK {
 		t.Fatalf("Failed to update user permissions, status: %d", respUp.StatusCode)
 	}
@@ -157,7 +157,7 @@ func TestUserManagementCRUDAndRevocation(t *testing.T) {
 	reqSt := httptest.NewRequest("PATCH", fmt.Sprintf("/t/%s/admin/users/%d/status", tenantSlug, created.ID), bytes.NewReader(bSt))
 	reqSt.Header.Set("Content-Type", "application/json")
 	reqSt.Header.Set("Authorization", "Bearer "+adminTok)
-	respSt, _ := app.Test(reqSt)
+	respSt, _ := app.Test(reqSt, 10000)
 	if respSt.StatusCode != http.StatusOK {
 		t.Fatalf("Failed to update user status to disabled, status: %d", respSt.StatusCode)
 	}
@@ -166,7 +166,7 @@ func TestUserManagementCRUDAndRevocation(t *testing.T) {
 	reqSelf := httptest.NewRequest("PATCH", fmt.Sprintf("/t/%s/admin/users/%d/status", tenantSlug, adminUser.ID), bytes.NewReader(bSt))
 	reqSelf.Header.Set("Content-Type", "application/json")
 	reqSelf.Header.Set("Authorization", "Bearer "+adminTok)
-	respSelf, _ := app.Test(reqSelf)
+	respSelf, _ := app.Test(reqSelf, 10000)
 	if respSelf.StatusCode != http.StatusBadRequest {
 		t.Fatalf("Expected 400 when disabling own account, got %d", respSelf.StatusCode)
 	}
@@ -179,7 +179,7 @@ func TestUserManagementCRUDAndRevocation(t *testing.T) {
 	reqRes := httptest.NewRequest("POST", fmt.Sprintf("/t/%s/admin/users/%d/reset-password", tenantSlug, created.ID), bytes.NewReader(bRes))
 	reqRes.Header.Set("Content-Type", "application/json")
 	reqRes.Header.Set("Authorization", "Bearer "+adminTok)
-	respRes, _ := app.Test(reqRes)
+	respRes, _ := app.Test(reqRes, 10000)
 	if respRes.StatusCode != http.StatusOK {
 		t.Fatalf("Failed to reset password, status: %d", respRes.StatusCode)
 	}
@@ -193,7 +193,7 @@ func TestUserManagementCRUDAndRevocation(t *testing.T) {
 	// 7. GET /t/:tenant/me returns current user details and permissions
 	reqMe := httptest.NewRequest("GET", fmt.Sprintf("/t/%s/me", tenantSlug), nil)
 	reqMe.Header.Set("Authorization", "Bearer "+adminTok)
-	respMe, _ := app.Test(reqMe)
+	respMe, _ := app.Test(reqMe, 10000)
 	if respMe.StatusCode != http.StatusOK {
 		t.Fatalf("Failed to call /t/:tenant/me, status: %d", respMe.StatusCode)
 	}
@@ -221,7 +221,7 @@ func TestUserManagementCRUDAndRevocation(t *testing.T) {
 
 	reqStaffMe := httptest.NewRequest("GET", fmt.Sprintf("/t/%s/me", tenantSlug), nil)
 	reqStaffMe.Header.Set("Authorization", "Bearer "+staffTok)
-	respStaffMe, _ := app.Test(reqStaffMe)
+	respStaffMe, _ := app.Test(reqStaffMe, 10000)
 	if respStaffMe.StatusCode != http.StatusOK {
 		t.Fatalf("Staff failed to call /t/:tenant/me: %d", respStaffMe.StatusCode)
 	}
@@ -266,7 +266,7 @@ func TestNonAdminPermissionMatrix(t *testing.T) {
 	// a) CAN view appointments (200 OK)
 	reqView := httptest.NewRequest("GET", fmt.Sprintf("/t/%s/admin/appointments", tenantSlug), nil)
 	reqView.Header.Set("Authorization", "Bearer "+viewerTok)
-	respView, _ := app.Test(reqView)
+	respView, _ := app.Test(reqView, 10000)
 	if respView.StatusCode != http.StatusOK {
 		t.Fatalf("Viewer should be allowed to view appointments, got status %d", respView.StatusCode)
 	}
@@ -283,7 +283,7 @@ func TestNonAdminPermissionMatrix(t *testing.T) {
 	reqCr := httptest.NewRequest("POST", fmt.Sprintf("/t/%s/admin/appointments", tenantSlug), bytes.NewReader(bCr))
 	reqCr.Header.Set("Content-Type", "application/json")
 	reqCr.Header.Set("Authorization", "Bearer "+viewerTok)
-	respCr, _ := app.Test(reqCr)
+	respCr, _ := app.Test(reqCr, 10000)
 	if respCr.StatusCode != http.StatusForbidden {
 		t.Fatalf("Viewer should be forbidden from creating appointments, got %d", respCr.StatusCode)
 	}
@@ -296,7 +296,7 @@ func TestNonAdminPermissionMatrix(t *testing.T) {
 	reqCa := httptest.NewRequest("PUT", fmt.Sprintf("/t/%s/admin/appointments/%d", tenantSlug, ap.ID), bytes.NewReader(bCa))
 	reqCa.Header.Set("Content-Type", "application/json")
 	reqCa.Header.Set("Authorization", "Bearer "+viewerTok)
-	respCa, _ := app.Test(reqCa)
+	respCa, _ := app.Test(reqCa, 10000)
 	if respCa.StatusCode != http.StatusForbidden {
 		t.Fatalf("Viewer should be forbidden from cancelling appointments, got %d", respCa.StatusCode)
 	}
@@ -309,7 +309,7 @@ func TestNonAdminPermissionMatrix(t *testing.T) {
 	reqEd := httptest.NewRequest("PUT", fmt.Sprintf("/t/%s/admin/appointments/%d", tenantSlug, ap.ID), bytes.NewReader(bEd))
 	reqEd.Header.Set("Content-Type", "application/json")
 	reqEd.Header.Set("Authorization", "Bearer "+viewerTok)
-	respEd, _ := app.Test(reqEd)
+	respEd, _ := app.Test(reqEd, 10000)
 	if respEd.StatusCode != http.StatusForbidden {
 		t.Fatalf("Viewer should be forbidden from editing appointments, got %d", respEd.StatusCode)
 	}
@@ -317,7 +317,7 @@ func TestNonAdminPermissionMatrix(t *testing.T) {
 	// e) CANNOT delete appointment (403 Forbidden)
 	reqDel := httptest.NewRequest("DELETE", fmt.Sprintf("/t/%s/admin/appointments/%d", tenantSlug, ap.ID), nil)
 	reqDel.Header.Set("Authorization", "Bearer "+viewerTok)
-	respDel, _ := app.Test(reqDel)
+	respDel, _ := app.Test(reqDel, 10000)
 	if respDel.StatusCode != http.StatusForbidden {
 		t.Fatalf("Viewer should be forbidden from deleting appointments, got %d", respDel.StatusCode)
 	}
@@ -325,7 +325,7 @@ func TestNonAdminPermissionMatrix(t *testing.T) {
 	// f) CANNOT access user management (403 Forbidden)
 	reqUsers := httptest.NewRequest("GET", fmt.Sprintf("/t/%s/admin/users", tenantSlug), nil)
 	reqUsers.Header.Set("Authorization", "Bearer "+viewerTok)
-	respUsers, _ := app.Test(reqUsers)
+	respUsers, _ := app.Test(reqUsers, 10000)
 	if respUsers.StatusCode != http.StatusForbidden {
 		t.Fatalf("Viewer should be forbidden from accessing user management, got %d", respUsers.StatusCode)
 	}

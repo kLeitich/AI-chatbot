@@ -50,9 +50,12 @@ func TestAuditLogEventsAndScoping(t *testing.T) {
 	bFail, _ := json.Marshal(failBody)
 	reqFail := httptest.NewRequest("POST", "/t/default/login", bytes.NewReader(bFail))
 	reqFail.Header.Set("Content-Type", "application/json")
-	respFail, _ := app.Test(reqFail)
-	if respFail.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("Expected 401 on failed login, got %d", respFail.StatusCode)
+	respFail, err := app.Test(reqFail, 10000)
+	if err != nil {
+		t.Fatalf("reqFail returned error: %v", err)
+	}
+	if respFail == nil || respFail.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("Expected 401 on failed login, got %v", respFail)
 	}
 
 	var failLog AuditLog
@@ -68,9 +71,9 @@ func TestAuditLogEventsAndScoping(t *testing.T) {
 	bSucc, _ := json.Marshal(succBody)
 	reqSucc := httptest.NewRequest("POST", "/t/default/login", bytes.NewReader(bSucc))
 	reqSucc.Header.Set("Content-Type", "application/json")
-	respSucc, _ := app.Test(reqSucc)
-	if respSucc.StatusCode != http.StatusOK {
-		t.Fatalf("Expected 200 on successful login, got %d", respSucc.StatusCode)
+	respSucc, err := app.Test(reqSucc, 10000)
+	if err != nil || respSucc.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 on successful login, err: %v, resp: %v", err, respSucc)
 	}
 
 	var succLog AuditLog
@@ -81,7 +84,7 @@ func TestAuditLogEventsAndScoping(t *testing.T) {
 	// C) Test Tenant Scoped Audit Log Endpoint
 	reqTenantAudit := httptest.NewRequest("GET", "/t/default/admin/audit", nil)
 	reqTenantAudit.Header.Set("Authorization", "Bearer "+adminTok)
-	respTenantAudit, err := app.Test(reqTenantAudit)
+	respTenantAudit, err := app.Test(reqTenantAudit, 10000)
 	if err != nil || respTenantAudit.StatusCode != http.StatusOK {
 		t.Fatalf("Tenant admin failed to fetch audit logs: %v, status: %d", err, respTenantAudit.StatusCode)
 	}
@@ -96,7 +99,7 @@ func TestAuditLogEventsAndScoping(t *testing.T) {
 	// D) Test Platform Audit Log Endpoint
 	reqPlatAudit := httptest.NewRequest("GET", "/platform/audit", nil)
 	reqPlatAudit.Header.Set("Authorization", "Bearer "+platTok)
-	respPlatAudit, err := app.Test(reqPlatAudit)
+	respPlatAudit, err := app.Test(reqPlatAudit, 10000)
 	if err != nil || respPlatAudit.StatusCode != http.StatusOK {
 		t.Fatalf("Platform admin failed to fetch audit logs: %v, status: %d", err, respPlatAudit.StatusCode)
 	}

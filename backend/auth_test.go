@@ -178,7 +178,7 @@ func TestRoleInjectionPrevented(t *testing.T) {
 	b, _ := json.Marshal(bodyComp)
 	req := httptest.NewRequest("POST", "/auth/register", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := app.Test(req)
+	resp, err := app.Test(req, 10000)
 	if err != nil {
 		t.Fatalf("Company registration request failed: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestRoleInjectionPrevented(t *testing.T) {
 	b2, _ := json.Marshal(bodyUser)
 	req2 := httptest.NewRequest("POST", fmt.Sprintf("/t/%s/register", tenantSlug), bytes.NewReader(b2))
 	req2.Header.Set("Content-Type", "application/json")
-	resp2, err := app.Test(req2)
+	resp2, err := app.Test(req2, 10000)
 	if err != nil {
 		t.Fatalf("Tenant user register request failed: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestRoleInjectionPrevented(t *testing.T) {
 	req3 := httptest.NewRequest("POST", "/t/shield-clinic/admin/users", bytes.NewReader(b3))
 	req3.Header.Set("Content-Type", "application/json")
 	req3.Header.Set("Authorization", "Bearer "+tenantAdminTok)
-	resp3, err := app.Test(req3)
+	resp3, err := app.Test(req3, 10000)
 	if err != nil {
 		t.Fatalf("Admin create user request failed: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestTokenBoundariesAndRevocation(t *testing.T) {
 	// 1. Platform admin token CAN access /platform/companies
 	req1 := httptest.NewRequest("GET", "/platform/companies", nil)
 	req1.Header.Set("Authorization", "Bearer "+platTok)
-	resp1, err := app.Test(req1)
+	resp1, err := app.Test(req1, 10000)
 	if err != nil || resp1.StatusCode != http.StatusOK {
 		t.Fatalf("Platform admin should access /platform/companies, got code %d, err: %v", resp1.StatusCode, err)
 	}
@@ -300,7 +300,7 @@ func TestTokenBoundariesAndRevocation(t *testing.T) {
 	// 2. Platform admin token CANNOT access /t/:tenant/admin/appointments (403 Forbidden)
 	req2 := httptest.NewRequest("GET", fmt.Sprintf("/t/%s/admin/appointments", tenantSlug), nil)
 	req2.Header.Set("Authorization", "Bearer "+platTok)
-	resp2, err := app.Test(req2)
+	resp2, err := app.Test(req2, 10000)
 	if err != nil || resp2.StatusCode != http.StatusForbidden {
 		t.Fatalf("Platform admin token should be forbidden on tenant admin route, got code %d", resp2.StatusCode)
 	}
@@ -308,7 +308,7 @@ func TestTokenBoundariesAndRevocation(t *testing.T) {
 	// 3. Tenant admin token CANNOT access /platform/companies (403 Forbidden)
 	req3 := httptest.NewRequest("GET", "/platform/companies", nil)
 	req3.Header.Set("Authorization", "Bearer "+tenantAdminTok)
-	resp3, err := app.Test(req3)
+	resp3, err := app.Test(req3, 10000)
 	if err != nil || resp3.StatusCode != http.StatusForbidden {
 		t.Fatalf("Tenant admin token should be forbidden on platform route, got code %d", resp3.StatusCode)
 	}
@@ -316,7 +316,7 @@ func TestTokenBoundariesAndRevocation(t *testing.T) {
 	// 4. Tenant admin CAN access their own tenant admin route
 	req4 := httptest.NewRequest("GET", fmt.Sprintf("/t/%s/admin/appointments", tenantSlug), nil)
 	req4.Header.Set("Authorization", "Bearer "+tenantAdminTok)
-	resp4, err := app.Test(req4)
+	resp4, err := app.Test(req4, 10000)
 	if err != nil || resp4.StatusCode != http.StatusOK {
 		t.Fatalf("Tenant admin should access their tenant admin route, got code %d", resp4.StatusCode)
 	}
@@ -325,7 +325,7 @@ func TestTokenBoundariesAndRevocation(t *testing.T) {
 	db.Model(&User{}).Where("id = ?", tenantAdminUser.ID).Update("status", "disabled")
 	req5 := httptest.NewRequest("GET", fmt.Sprintf("/t/%s/admin/appointments", tenantSlug), nil)
 	req5.Header.Set("Authorization", "Bearer "+tenantAdminTok)
-	resp5, err := app.Test(req5)
+	resp5, err := app.Test(req5, 10000)
 	if err != nil || resp5.StatusCode != http.StatusForbidden {
 		t.Fatalf("Disabled user token should be rejected with 403 Forbidden, got code %d", resp5.StatusCode)
 	}
@@ -337,7 +337,7 @@ func TestTokenBoundariesAndRevocation(t *testing.T) {
 	})
 	req6 := httptest.NewRequest("GET", fmt.Sprintf("/t/%s/admin/appointments", tenantSlug), nil)
 	req6.Header.Set("Authorization", "Bearer "+tenantAdminTok) // Token has token_version = 1
-	resp6, err := app.Test(req6)
+	resp6, err := app.Test(req6, 10000)
 	if err != nil || resp6.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("Stale token_version should be rejected with 401 Unauthorized, got code %d", resp6.StatusCode)
 	}

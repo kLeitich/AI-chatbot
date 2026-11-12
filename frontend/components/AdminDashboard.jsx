@@ -5,6 +5,7 @@ import api from '../lib/api'
 import AppointmentTable from './AppointmentTable'
 import Calendar from './Calendar'
 import DashboardNav from './DashboardNav'
+import TeamManagement from './TeamManagement'
 
 export default function AdminDashboard({ tenant = 'default' }) {
   const [appointments, setAppointments] = useState([])
@@ -15,6 +16,15 @@ export default function AdminDashboard({ tenant = 'default' }) {
   const [currentDate, setCurrentDate] = useState(new Date())
   const router = useRouter()
 
+  // User profile & permissions from /t/:tenant/me
+  const [userProfile, setUserProfile] = useState(null)
+  const [forcePasswordChange, setForcePasswordChange] = useState(false)
+  const [forceCurrentPassword, setForceCurrentPassword] = useState('')
+  const [forceNewPassword, setForceNewPassword] = useState('')
+  const [forceConfirmPassword, setForceConfirmPassword] = useState('')
+  const [forcePasswordError, setForcePasswordError] = useState('')
+  const [forcePasswordSuccess, setForcePasswordSuccess] = useState('')
+
   // Filters
   const [fPatient, setFPatient] = useState('')
   const [fDoctor, setFDoctor] = useState('')
@@ -23,11 +33,24 @@ export default function AdminDashboard({ tenant = 'default' }) {
   const [fReason, setFReason] = useState('')
   const [fStatus, setFStatus] = useState('')
 
-  const load = async () => {
+  // Check /me and load appointments
+  const loadProfileAndData = async () => {
     setLoading(true)
     try {
-      const res = await api.get(`/t/${tenant}/admin/appointments`)
-      setAppointments(res.data || [])
+      const meRes = await api.get(`/t/${tenant}/me`)
+      const profile = meRes.data
+      setUserProfile(profile)
+
+      if (profile.must_change_password) {
+        setForcePasswordChange(true)
+      }
+
+      // Check if user has permission to view appointments
+      const canView = profile.role === 'tenant_admin' || (profile.permissions || []).includes('appointments.view')
+      if (canView) {
+        const res = await api.get(`/t/${tenant}/admin/appointments`)
+        setAppointments(res.data || [])
+      }
     } catch (e) {
       if (e?.response?.status === 401) {
         localStorage.removeItem('token')
@@ -38,7 +61,17 @@ export default function AdminDashboard({ tenant = 'default' }) {
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    loadProfileAndData()
+  }, [tenant])
+
+  // Permission flags
+  const isTenantAdmin = userProfile?.role === 'tenant_admin'
+  const perms = userProfile?.permissions || []
+  const canViewAppointments = isTenantAdmin || perms.includes('appointments.view')
+  const canCreateAppointments = isTenantAdmin || perms.includes('appointments.create')
+  const canEditAppointments = isTenantAdmin || perms.includes('appointments.edit') || perms.includes('appointments.cancel')
+  const canDeleteAppointments = isTenantAdmin || perms.includes('appointments.delete')
 
   const filtered = useMemo(() => {
     const match = (val, q) => String(val || '').toLowerCase().includes(String(q || '').toLowerCase())
@@ -58,19 +91,27 @@ export default function AdminDashboard({ tenant = 'default' }) {
 
   const onDelete = async (a) => {
     if (!confirm(`Delete appointment #${a.id}?`)) return
-    await api.delete(`/t/${tenant}/admin/appointments/${a.id}`)
-    load()
+    try {
+      await api.delete(`/t/${tenant}/admin/appointments/${a.id}`)
+      loadProfileAndData()
+    } catch (e) {
+      alert(e?.response?.data?.message || 'Failed to delete appointment')
+    }
   }
 
   const onSave = async () => {
     const { id, ...rest } = editing
-    if (id) {
-      await api.put(`/t/${tenant}/admin/appointments/${id}`, rest)
-    } else {
-      await api.post(`/t/${tenant}/admin/appointments`, rest)
+    try {
+      if (id) {
+        await api.put(`/t/${tenant}/admin/appointments/${id}`, rest)
+      } else {
+        await api.post(`/t/${tenant}/admin/appointments`, rest)
+      }
+      setEditing(null)
+      await loadProfileAndData()
+    } catch (e) {
+      alert(e?.response?.data?.message || 'Failed to save appointment')
     }
-    setEditing(null)
-    await load() // Always refresh for modal adds/edits
   }
 
   const onAddFromCalendar = (draft) => { setEditing({ ...draft }) }
@@ -78,17 +119,127 @@ export default function AdminDashboard({ tenant = 'default' }) {
     setEditing({ patient_name: '', doctor: '', date: '', time: '', reason: '', status: 'pending' })
   }
 
+  const handleForcedPasswordSubmit = async (e) => {
+    e.preventDefault()
+    setForcePasswordError('')
+    setForcePasswordSuccess('')
+
+    if (forceNewPassword !== forceConfirmPassword) {
+      setForcePasswordError('New passwords do not match')
+      return
+    }
+    if (forceNewPassword.length < 10) {
+      setForcePasswordError('Password must be at least 10 characters long')
+      return
+    }
+
+    try {
+      await api.post(`/t/${tenant}/change-password`, {
+        current_password: forceCurrentPassword,
+        new_password: forceNewPassword,
+      })
+      setForcePasswordSuccess('Password updated successfully! Redirecting...')
+      setTimeout(() => {
+        setForcePasswordChange(false)
+        loadProfileAndData()
+      }, 1500)
+    } catch (err) {
+      setForcePasswordError(err?.response?.data?.message || 'Failed to change password')
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-50">
       <DashboardNav tenant={tenant} isPlatform={false} />
+
+      {forcePasswordChange && (
+        <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="border-b pb-3">
+              <h2 className="text-xl font-bold text-slate-900">Password Change Required</h2>
+              <p className="text-sm text-slate-600 mt-1">
+                You must update your temporary password before accessing the system.
+              </p>
+            </div>
+
+            {forcePasswordError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded-lg">
+                {forcePasswordError}
+              </div>
+            )}
+            {forcePasswordSuccess && (
+              <div className="bg-green-50 border border-green-200 text-green-700 text-sm p-3 rounded-lg">
+                {forcePasswordSuccess}
+              </div>
+            )}
+
+            <form onSubmit={handleForcedPasswordSubmit} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">Current / Temp Password</label>
+                <input
+                  type="password"
+                  required
+                  value={forceCurrentPassword}
+                  onChange={(e) => setForceCurrentPassword(e.target.value)}
+                  className="w-full border rounded-lg p-2 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">New Password (min 10 chars)</label>
+                <input
+                  type="password"
+                  required
+                  value={forceNewPassword}
+                  onChange={(e) => setForceNewPassword(e.target.value)}
+                  className="w-full border rounded-lg p-2 text-sm"
+                  placeholder="Min 10 characters"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">Confirm New Password</label>
+                <input
+                  type="password"
+                  required
+                  value={forceConfirmPassword}
+                  onChange={(e) => setForceConfirmPassword(e.target.value)}
+                  className="w-full border rounded-lg p-2 text-sm"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg text-sm mt-2"
+              >
+                Change Password & Continue
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-5xl mx-auto p-4 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button className="px-3 py-1 rounded bg-blue-600 text-white" onClick={onAddFromTable}>New</button>
-            <div className="inline-flex border rounded overflow-hidden">
-              <button className={`px-3 py-1 text-sm ${view === 'table' ? 'bg-blue-600 text-white' : 'bg-white'}`} onClick={() => setView('table')}>Table</button>
-              <button className={`px-3 py-1 text-sm ${view === 'calendar' ? 'bg-blue-600 text-white' : 'bg-white'}`} onClick={() => setView('calendar')}>Calendar</button>
+            {view !== 'team' && canCreateAppointments && (
+              <button className="px-3 py-1 rounded bg-blue-600 text-white font-medium text-sm" onClick={onAddFromTable}>
+                + New Appointment
+              </button>
+            )}
+
+            <div className="inline-flex border rounded overflow-hidden shadow-sm">
+              {canViewAppointments && (
+                <>
+                  <button className={`px-3 py-1 text-sm ${view === 'table' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('table')}>Table</button>
+                  <button className={`px-3 py-1 text-sm ${view === 'calendar' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('calendar')}>Calendar</button>
+                </>
+              )}
+              {isTenantAdmin && (
+                <button className={`px-3 py-1 text-sm font-medium ${view === 'team' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('team')}>Team</button>
+              )}
             </div>
+
             {view === 'calendar' && (
               <div className="inline-flex border rounded overflow-hidden">
                 <button className={`px-3 py-1 text-sm ${calendarMode === 'month' ? 'bg-gray-900 text-white' : 'bg-white'}`} onClick={() => setCalendarMode('month')}>Month</button>
@@ -98,60 +249,80 @@ export default function AdminDashboard({ tenant = 'default' }) {
           </div>
         </div>
 
-      {view === 'table' && (
-        <div className="bg-white border rounded p-3 shadow space-y-2">
-          <div className="grid grid-cols-6 gap-2">
-            <input value={fPatient} onChange={(e)=>setFPatient(e.target.value)} className="border rounded p-2" placeholder="Filter patient" />
-            <input value={fDoctor} onChange={(e)=>setFDoctor(e.target.value)} className="border rounded p-2" placeholder="Filter doctor" />
-            <input value={fDate} onChange={(e)=>setFDate(e.target.value)} className="border rounded p-2" placeholder="Filter date YYYY-MM-DD" />
-            <input value={fTime} onChange={(e)=>setFTime(e.target.value)} className="border rounded p-2" placeholder="Filter time HH:MM" />
-            <input value={fReason} onChange={(e)=>setFReason(e.target.value)} className="border rounded p-2" placeholder="Filter reason" />
-            <select value={fStatus} onChange={(e)=>setFStatus(e.target.value)} className="border rounded p-2">
-              <option value="">All statuses</option>
-              <option value="pending">pending</option>
-              <option value="confirmed">confirmed</option>
-              <option value="cancelled">cancelled</option>
-            </select>
-          </div>
-          <div className="flex justify-end">
-            <button className="text-sm text-gray-600 hover:underline" onClick={clearFilters}>Clear filters</button>
-          </div>
-        </div>
-      )}
+        {view === 'team' ? (
+          <TeamManagement tenant={tenant} />
+        ) : (
+          <>
+            {view === 'table' && (
+              <div className="bg-white border rounded p-3 shadow-sm space-y-2">
+                <div className="grid grid-cols-6 gap-2">
+                  <input value={fPatient} onChange={(e)=>setFPatient(e.target.value)} className="border rounded p-2 text-sm" placeholder="Filter patient" />
+                  <input value={fDoctor} onChange={(e)=>setFDoctor(e.target.value)} className="border rounded p-2 text-sm" placeholder="Filter doctor" />
+                  <input value={fDate} onChange={(e)=>setFDate(e.target.value)} className="border rounded p-2 text-sm" placeholder="Filter date YYYY-MM-DD" />
+                  <input value={fTime} onChange={(e)=>setFTime(e.target.value)} className="border rounded p-2 text-sm" placeholder="Filter time HH:MM" />
+                  <input value={fReason} onChange={(e)=>setFReason(e.target.value)} className="border rounded p-2 text-sm" placeholder="Filter reason" />
+                  <select value={fStatus} onChange={(e)=>setFStatus(e.target.value)} className="border rounded p-2 text-sm bg-white">
+                    <option value="">All statuses</option>
+                    <option value="pending">pending</option>
+                    <option value="confirmed">confirmed</option>
+                    <option value="cancelled">cancelled</option>
+                  </select>
+                </div>
+                <div className="flex justify-end">
+                  <button className="text-sm text-gray-600 hover:underline" onClick={clearFilters}>Clear filters</button>
+                </div>
+              </div>
+            )}
 
-      {loading ? (
-        <p>Loading...</p>
-      ) : view === 'table' ? (
-        <AppointmentTable appointments={filtered} onEdit={setEditing} onDelete={onDelete} />
-      ) : (
-        <Calendar view={calendarMode} date={currentDate} onChangeDate={setCurrentDate} appointments={filtered} onAdd={onAddFromCalendar} onEdit={setEditing} onDelete={onDelete} />
-      )}
+            {loading ? (
+              <p className="text-center py-6 text-gray-500">Loading appointments...</p>
+            ) : view === 'table' ? (
+              <AppointmentTable
+                appointments={filtered}
+                onEdit={setEditing}
+                onDelete={onDelete}
+                canEdit={canEditAppointments}
+                canDelete={canDeleteAppointments}
+              />
+            ) : (
+              <Calendar
+                view={calendarMode}
+                date={currentDate}
+                onChangeDate={setCurrentDate}
+                appointments={filtered}
+                onAdd={canCreateAppointments ? onAddFromCalendar : undefined}
+                onEdit={canEditAppointments ? setEditing : undefined}
+                onDelete={canDeleteAppointments ? onDelete : undefined}
+              />
+            )}
+          </>
+        )}
 
-      {editing && (
-        <div className="fixed inset-0 bg-black/40 grid place-items-center p-4">
-          <div className="bg-white rounded shadow w-full max-w-lg p-4 space-y-3">
-            <h3 className="text-lg font-medium">{editing.id ? `Edit Appointment #${editing.id}` : 'Create Appointment'}</h3>
-            <div className="grid grid-cols-2 gap-3">
-              <L label="Patient"><input className="border rounded p-2 w-full" value={editing.patient_name || ''} onChange={(e) => setEditing({ ...editing, patient_name: e.target.value })} /></L>
-              <L label="Doctor"><input className="border rounded p-2 w-full" value={editing.doctor || ''} onChange={(e) => setEditing({ ...editing, doctor: e.target.value })} /></L>
-              <L label="Date"><input className="border rounded p-2 w-full" value={editing.date || ''} onChange={(e) => setEditing({ ...editing, date: e.target.value })} placeholder="YYYY-MM-DD" /></L>
-              <L label="Time"><input className="border rounded p-2 w-full" value={editing.time || ''} onChange={(e) => setEditing({ ...editing, time: e.target.value })} placeholder="HH:MM" /></L>
-              <L label="Reason" className="col-span-2"><input className="border rounded p-2 w-full" value={editing.reason || ''} onChange={(e) => setEditing({ ...editing, reason: e.target.value })} /></L>
-              <L label="Status" className="col-span-2">
-                <select className="border rounded p-2 w-full" value={editing.status || 'pending'} onChange={(e) => setEditing({ ...editing, status: e.target.value })}>
-                  <option value="pending">pending</option>
-                  <option value="confirmed">confirmed</option>
-                  <option value="cancelled">cancelled</option>
-                </select>
-              </L>
-            </div>
-            <div className="flex justify-end gap-2">
-              <button className="px-4 py-2 rounded border" onClick={() => setEditing(null)}>Cancel</button>
-              <button className="px-4 py-2 rounded bg-blue-600 text-white" onClick={onSave}>{editing.id ? 'Save' : 'Create'}</button>
+        {editing && (
+          <div className="fixed inset-0 bg-black/40 grid place-items-center p-4 z-50">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-4 space-y-3">
+              <h3 className="text-lg font-medium">{editing.id ? `Edit Appointment #${editing.id}` : 'Create Appointment'}</h3>
+              <div className="grid grid-cols-2 gap-3">
+                <L label="Patient"><input className="border rounded p-2 w-full text-sm" value={editing.patient_name || ''} onChange={(e) => setEditing({ ...editing, patient_name: e.target.value })} /></L>
+                <L label="Doctor"><input className="border rounded p-2 w-full text-sm" value={editing.doctor || ''} onChange={(e) => setEditing({ ...editing, doctor: e.target.value })} /></L>
+                <L label="Date"><input className="border rounded p-2 w-full text-sm" value={editing.date || ''} onChange={(e) => setEditing({ ...editing, date: e.target.value })} placeholder="YYYY-MM-DD" /></L>
+                <L label="Time"><input className="border rounded p-2 w-full text-sm" value={editing.time || ''} onChange={(e) => setEditing({ ...editing, time: e.target.value })} placeholder="HH:MM" /></L>
+                <L label="Reason" className="col-span-2"><input className="border rounded p-2 w-full text-sm" value={editing.reason || ''} onChange={(e) => setEditing({ ...editing, reason: e.target.value })} /></L>
+                <L label="Status" className="col-span-2">
+                  <select className="border rounded p-2 w-full text-sm bg-white" value={editing.status || 'pending'} onChange={(e) => setEditing({ ...editing, status: e.target.value })}>
+                    <option value="pending">pending</option>
+                    <option value="confirmed">confirmed</option>
+                    <option value="cancelled">cancelled</option>
+                  </select>
+                </L>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button className="px-4 py-2 rounded border text-sm" onClick={() => setEditing(null)}>Cancel</button>
+                <button className="px-4 py-2 rounded bg-blue-600 text-white text-sm font-medium" onClick={onSave}>{editing.id ? 'Save' : 'Create'}</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
       </div>
     </div>
   )
@@ -160,7 +331,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
 function L({ label, children, className = '' }) {
   return (
     <label className={`flex flex-col gap-1 ${className}`}>
-      <span className="text-sm text-gray-600">{label}</span>
+      <span className="text-xs font-semibold text-gray-600">{label}</span>
       {children}
     </label>
   )

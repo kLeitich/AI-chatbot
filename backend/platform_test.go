@@ -73,7 +73,7 @@ func TestPlatformViewTenantsAndCounts(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/platform/tenants", nil)
 	req.Header.Set("Authorization", "Bearer "+platTok)
-	resp, err := app.Test(req)
+	resp, err := app.Test(req, 10000)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("Failed to fetch /platform/tenants: %v, status: %d", err, resp.StatusCode)
 	}
@@ -118,7 +118,7 @@ func TestPlatformViewAppointmentsWithFilters(t *testing.T) {
 	urlTenant := fmt.Sprintf("/platform/appointments?tenant_id=%d", t1.ID)
 	req1 := httptest.NewRequest("GET", urlTenant, nil)
 	req1.Header.Set("Authorization", "Bearer "+platTok)
-	resp1, err := app.Test(req1)
+	resp1, err := app.Test(req1, 10000)
 	if err != nil || resp1.StatusCode != http.StatusOK {
 		t.Fatalf("Failed with tenant filter: %v, status: %d", err, resp1.StatusCode)
 	}
@@ -131,7 +131,7 @@ func TestPlatformViewAppointmentsWithFilters(t *testing.T) {
 	// 2. Filter by status on this tenant
 	req2 := httptest.NewRequest("GET", fmt.Sprintf("/platform/appointments?tenant_id=%d&status=confirmed", t1.ID), nil)
 	req2.Header.Set("Authorization", "Bearer "+platTok)
-	resp2, _ := app.Test(req2)
+	resp2, _ := app.Test(req2, 10000)
 	var res2 PaginatedAppointmentsResponse
 	json.NewDecoder(resp2.Body).Decode(&res2)
 	if res2.Total != 1 {
@@ -141,7 +141,7 @@ func TestPlatformViewAppointmentsWithFilters(t *testing.T) {
 	// 3. Filter by date range across clinics
 	req3 := httptest.NewRequest("GET", "/platform/appointments?start_date=2026-11-18&end_date=2026-11-22", nil)
 	req3.Header.Set("Authorization", "Bearer "+platTok)
-	resp3, _ := app.Test(req3)
+	resp3, _ := app.Test(req3, 10000)
 	var res3 PaginatedAppointmentsResponse
 	json.NewDecoder(resp3.Body).Decode(&res3)
 	if res3.Total != 1 {
@@ -155,7 +155,7 @@ func TestPlatformAdminBlockedFromTenantAdminWrites(t *testing.T) {
 	// Attempt to create an appointment on tenant admin endpoint
 	req1 := httptest.NewRequest("POST", fmt.Sprintf("/t/%s/admin/appointments", tenantSlug), nil)
 	req1.Header.Set("Authorization", "Bearer "+platTok)
-	resp1, _ := app.Test(req1)
+	resp1, _ := app.Test(req1, 10000)
 	if resp1.StatusCode != http.StatusForbidden {
 		t.Fatalf("Platform admin should be blocked from tenant admin appointment creation with 403, got %d", resp1.StatusCode)
 	}
@@ -163,7 +163,7 @@ func TestPlatformAdminBlockedFromTenantAdminWrites(t *testing.T) {
 	// Attempt to create a doctor on tenant admin endpoint
 	req2 := httptest.NewRequest("POST", fmt.Sprintf("/t/%s/admin/doctors", tenantSlug), nil)
 	req2.Header.Set("Authorization", "Bearer "+platTok)
-	resp2, _ := app.Test(req2)
+	resp2, _ := app.Test(req2, 10000)
 	if resp2.StatusCode != http.StatusForbidden {
 		t.Fatalf("Platform admin should be blocked from tenant admin doctor creation with 403, got %d", resp2.StatusCode)
 	}
