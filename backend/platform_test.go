@@ -18,7 +18,7 @@ func setupPlatformTestApp(t *testing.T) (*fiber.App, uint, string, string) {
 	dbPath := filepath.Join(tempDir, "platform_test.db")
 	tenantID := initDatabase(dbPath, "development")
 
-	app := fiber.New()
+	app := fiber.New(fiber.Config{ErrorHandler: customErrorHandler})
 
 	// Platform admin endpoints (strictly read-only views)
 	platform := app.Group("/platform", jwtMiddleware, platformAdminMiddleware)

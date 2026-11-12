@@ -187,7 +187,7 @@ func loginHandler(c *fiber.Ctx) error {
 
 	if user.Status == "disabled" {
 		recordAuditLog(user.ID, user.Role, tenant.ID, "login_failure_disabled", "auth", user.ID, c.IP())
-		return fiber.NewError(fiber.StatusForbidden, "account is disabled; please contact your administrator")
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeAccountDisabled, "account is disabled; please contact your administrator")
 	}
 
 	if !checkPasswordHash(req.Password, user.Password) {
@@ -220,7 +220,7 @@ func platformLoginHandler(c *fiber.Ctx) error {
 
 	if user.Status == "disabled" {
 		recordAuditLog(user.ID, user.Role, 0, "login_failure_disabled", "platform_auth", user.ID, c.IP())
-		return fiber.NewError(fiber.StatusForbidden, "account is disabled")
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeAccountDisabled, "account is disabled")
 	}
 
 	if !checkPasswordHash(req.Password, user.Password) {

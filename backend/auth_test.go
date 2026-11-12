@@ -22,7 +22,7 @@ func setupAuthTestApp(t *testing.T) (*fiber.App, uint, string) {
 	dbPath := filepath.Join(tempDir, "auth_test.db")
 	tenantID := initDatabase(dbPath, "development")
 
-	app := fiber.New()
+	app := fiber.New(fiber.Config{ErrorHandler: customErrorHandler})
 
 	app.Post("/auth/register", companyRegisterHandler)
 	app.Post("/auth/platform/login", platformLoginHandler)
@@ -321,16 +321,21 @@ func TestTokenBoundariesAndRevocation(t *testing.T) {
 		t.Fatalf("Tenant admin should access their tenant admin route, got code %d", resp4.StatusCode)
 	}
 
-	// 5. Disabled account is immediately rejected (403 Forbidden)
+	// 5. Disabled account is immediately rejected with 401 Unauthorized and ACCOUNT_DISABLED
 	db.Model(&User{}).Where("id = ?", tenantAdminUser.ID).Update("status", "disabled")
 	req5 := httptest.NewRequest("GET", fmt.Sprintf("/t/%s/admin/appointments", tenantSlug), nil)
 	req5.Header.Set("Authorization", "Bearer "+tenantAdminTok)
 	resp5, err := app.Test(req5, 10000)
-	if err != nil || resp5.StatusCode != http.StatusForbidden {
-		t.Fatalf("Disabled user token should be rejected with 403 Forbidden, got code %d", resp5.StatusCode)
+	if err != nil || resp5.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("Disabled user token should be rejected with 401 Unauthorized, got code %d", resp5.StatusCode)
+	}
+	var errBody5 map[string]interface{}
+	json.NewDecoder(resp5.Body).Decode(&errBody5)
+	if errBody5["code"] != ErrCodeAccountDisabled {
+		t.Fatalf("Expected error code %s for disabled account, got %v", ErrCodeAccountDisabled, errBody5["code"])
 	}
 
-	// Re-enable user, but bump token_version -> token is revoked (401 Unauthorized)
+	// Re-enable user, but bump token_version -> token is revoked (401 Unauthorized and TOKEN_REVOKED)
 	db.Model(&User{}).Where("id = ?", tenantAdminUser.ID).Updates(map[string]interface{}{
 		"status":        "active",
 		"token_version": 2,
@@ -340,5 +345,10 @@ func TestTokenBoundariesAndRevocation(t *testing.T) {
 	resp6, err := app.Test(req6, 10000)
 	if err != nil || resp6.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("Stale token_version should be rejected with 401 Unauthorized, got code %d", resp6.StatusCode)
+	}
+	var errBody6 map[string]interface{}
+	json.NewDecoder(resp6.Body).Decode(&errBody6)
+	if errBody6["code"] != ErrCodeTokenRevoked {
+		t.Fatalf("Expected error code %s for revoked token, got %v", ErrCodeTokenRevoked, errBody6["code"])
 	}
 }

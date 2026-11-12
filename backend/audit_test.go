@@ -120,7 +120,7 @@ func TestAuditLogEventsAndScoping(t *testing.T) {
 }
 
 func setupTestAppWithAudit(tenantID uint) *fiber.App {
-	app := fiber.New()
+	app := fiber.New(fiber.Config{ErrorHandler: customErrorHandler})
 
 	app.Post("/auth/platform/login", platformLoginHandler)
 

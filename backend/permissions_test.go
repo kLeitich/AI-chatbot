@@ -19,7 +19,7 @@ func setupPermissionsTestApp(t *testing.T) (*fiber.App, uint, string, string, Us
 	dbPath := filepath.Join(tempDir, "perm_test.db")
 	tenantID := initDatabase(dbPath, "development")
 
-	app := fiber.New()
+	app := fiber.New(fiber.Config{ErrorHandler: customErrorHandler})
 
 	tenant := app.Group("/t/:tenant")
 	tenant.Get("/me", jwtMiddleware, tenantUserMiddleware, getTenantMeHandler)

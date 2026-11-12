@@ -138,7 +138,7 @@ func requirePermission(perm string) fiber.Handler {
 		}
 
 		if !hasPermission(c, perm) {
-			return fiber.NewError(fiber.StatusForbidden, fmt.Sprintf("permission denied: missing '%s'", perm))
+			return sendError(c, fiber.StatusForbidden, ErrCodePermissionDenied, fmt.Sprintf("permission denied: missing '%s'", perm))
 		}
 
 		return c.Next()

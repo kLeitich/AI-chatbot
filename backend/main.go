@@ -79,7 +79,9 @@ func main() {
 	// Bootstrap platform admin if zero exist and credentials provided
 	bootstrapPlatformAdmin(appEnv)
 
-	fiberConfig := fiber.Config{}
+	fiberConfig := fiber.Config{
+		ErrorHandler: customErrorHandler,
+	}
 	if strings.EqualFold(getEnv("TRUST_PROXY", "false"), "true") {
 		fiberConfig.ProxyHeader = "X-Forwarded-For"
 		log.Println("[config] TRUST_PROXY=true: enabled X-Forwarded-For proxy header tracking")
