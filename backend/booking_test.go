@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -9,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 )
 
@@ -373,6 +378,89 @@ func TestBookingCrossTenantIsolation(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("Cross-tenant isolation failure: Tenant 2 booking was blocked by Tenant 1: %v", err)
+	}
+}
+
+func TestAdminBookingConflictReturns409WithAlternatives(t *testing.T) {
+	_ = validateConfig("development", "")
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "conflict_test.db")
+	tenantID := initDatabase(dbPath, "development")
+
+	app := fiber.New(fiber.Config{ErrorHandler: customErrorHandler})
+	tenant := app.Group("/t/:tenant")
+	admin := tenant.Group("/admin", jwtMiddleware, tenantUserMiddleware)
+	admin.Post("/appointments", requirePermission(PermAppointmentsCreate), createAppointment)
+	admin.Put("/appointments/:id", updateAppointment)
+
+	adminUser := User{
+		Email:        "admin@default.internal",
+		Role:         RoleTenantAdmin,
+		TenantID:     tenantID,
+		Status:       "active",
+		TokenVersion: 1,
+	}
+	db.Create(&adminUser)
+
+	adminTok, err := createTenantJWTToken(adminUser.ID, adminUser.Email, tenantID, RoleTenantAdmin, 1)
+	if err != nil {
+		t.Fatalf("Failed to create admin token: %v", err)
+	}
+
+	dateStr, _ := getFutureWeekday(time.Monday, 7)
+	slotTime := "10:00"
+
+	// 1. First appointment creation succeeds
+	body1 := map[string]string{
+		"patient_name": "First Patient",
+		"doctor":       "Dr. Kim",
+		"date":         dateStr,
+		"time":         slotTime,
+		"reason":       "Checkup",
+	}
+	b1, _ := json.Marshal(body1)
+	req1 := httptest.NewRequest("POST", "/t/default/admin/appointments", bytes.NewReader(b1))
+	req1.Header.Set("Content-Type", "application/json")
+	req1.Header.Set("Authorization", "Bearer "+adminTok)
+	resp1, err := app.Test(req1, 10000)
+	if err != nil || resp1.StatusCode != http.StatusCreated {
+		t.Fatalf("First appointment creation failed, status: %d", resp1.StatusCode)
+	}
+
+	// 2. Second appointment creation on SAME slot returns 409 SLOT_TAKEN with up to 3 alternatives
+	body2 := map[string]string{
+		"patient_name": "Second Patient",
+		"doctor":       "Dr. Kim",
+		"date":         dateStr,
+		"time":         slotTime,
+		"reason":       "Followup",
+	}
+	b2, _ := json.Marshal(body2)
+	req2 := httptest.NewRequest("POST", "/t/default/admin/appointments", bytes.NewReader(b2))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Authorization", "Bearer "+adminTok)
+	resp2, err := app.Test(req2, 10000)
+	if err != nil || resp2.StatusCode != http.StatusConflict {
+		t.Fatalf("Expected 409 Conflict for duplicate slot booking, got %d", resp2.StatusCode)
+	}
+
+	var conflictResp struct {
+		Message      string   `json:"message"`
+		Code         string   `json:"code"`
+		Alternatives []string `json:"alternatives"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&conflictResp); err != nil {
+		t.Fatalf("Failed to decode conflict response: %v", err)
+	}
+
+	if conflictResp.Code != ErrCodeSlotTaken {
+		t.Errorf("Expected code=%s, got %s", ErrCodeSlotTaken, conflictResp.Code)
+	}
+	if len(conflictResp.Alternatives) == 0 {
+		t.Errorf("Expected alternative slots, got none")
+	}
+	if len(conflictResp.Alternatives) > 3 {
+		t.Errorf("Expected at most 3 alternative slots, got %d", len(conflictResp.Alternatives))
 	}
 }
 

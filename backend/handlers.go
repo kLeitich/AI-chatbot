@@ -329,8 +329,12 @@ func createAppointment(c *fiber.Ctx) error {
 		return bErr
 	})
 	if err != nil {
+		if len(alts) > 3 {
+			alts = alts[:3]
+		}
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-			"error":        err.Error(),
+			"message":      err.Error(),
+			"code":         ErrCodeSlotTaken,
 			"alternatives": alts,
 		})
 	}
@@ -402,8 +406,12 @@ func updateAppointment(c *fiber.Ctx) error {
 			return bErr
 		})
 		if err != nil {
+			if len(alts) > 3 {
+				alts = alts[:3]
+			}
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-				"error":        err.Error(),
+				"message":      err.Error(),
+				"code":         ErrCodeSlotTaken,
 				"alternatives": alts,
 			})
 		}
