@@ -82,6 +82,18 @@ type Doctor struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+type AuditLog struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	At          time.Time `gorm:"not null;index" json:"at"`
+	ActorUserID uint      `gorm:"index" json:"actor_user_id"`
+	ActorRole   string    `gorm:"size:100;index" json:"actor_role"`
+	TenantID    uint      `gorm:"index" json:"tenant_id"` // 0 if platform-wide
+	Action      string    `gorm:"size:100;not null;index" json:"action"`
+	Entity      string    `gorm:"size:100;not null;index" json:"entity"`
+	EntityID    uint      `gorm:"index" json:"entity_id"`
+	IP          string    `gorm:"size:100" json:"ip"`
+}
+
 type ReasonOption struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	TenantID  uint      `gorm:"index" json:"tenant_id"`

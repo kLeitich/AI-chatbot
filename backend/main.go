@@ -148,10 +148,14 @@ func main() {
 	app.Post("/platform/login", platformLoginLimiter, platformLoginHandler)
 	app.Post("/auth/change-password", jwtMiddleware, changePasswordHandler)
 
-	// Platform admin endpoints (read-only views)
+	// Platform admin endpoints (strictly read-only views)
 	platform := app.Group("/platform", jwtMiddleware, platformAdminMiddleware)
-	platform.Get("/companies", listCompanies)
-	platform.Get("/users", listUsers)
+	platform.Get("/tenants", listPlatformTenants)
+	platform.Get("/companies", listPlatformTenants)
+	platform.Get("/users", listPlatformUsers)
+	platform.Get("/doctors", listPlatformDoctors)
+	platform.Get("/appointments", listPlatformAppointments)
+	platform.Get("/audit", listPlatformAuditLogs)
 
 	// Tenant-scoped API under /t/:tenant/...
 	tenant := app.Group("/t/:tenant")
