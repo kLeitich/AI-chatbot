@@ -149,6 +149,24 @@ func TestUserManagementCRUDAndRevocation(t *testing.T) {
 		t.Errorf("Expected 2 permissions after switching to viewer, got %d", len(permsAfter))
 	}
 
+	// 3b. Unknown permission in update returns 400 VALIDATION_ERROR
+	bodyBadPerm := map[string]interface{}{
+		"permissions": []string{"appointments.view", "malicious.permission"},
+	}
+	bBad, _ := json.Marshal(bodyBadPerm)
+	reqBad := httptest.NewRequest("PATCH", fmt.Sprintf("/t/%s/admin/users/%d/permissions", tenantSlug, created.ID), bytes.NewReader(bBad))
+	reqBad.Header.Set("Content-Type", "application/json")
+	reqBad.Header.Set("Authorization", "Bearer "+adminTok)
+	respBad, _ := app.Test(reqBad, 10000)
+	if respBad.StatusCode != http.StatusBadRequest {
+		t.Fatalf("Expected 400 Bad Request for unknown permission, got %d", respBad.StatusCode)
+	}
+	var errData map[string]interface{}
+	json.NewDecoder(respBad.Body).Decode(&errData)
+	if errData["code"] != ErrCodeValidationError {
+		t.Errorf("Expected error code %s, got %v", ErrCodeValidationError, errData["code"])
+	}
+
 	// 4. Status update: disable user
 	bodyStatus := map[string]interface{}{
 		"status": "disabled",
