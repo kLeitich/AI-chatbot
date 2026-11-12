@@ -259,3 +259,57 @@ func listPlatformAuditLogs(c *fiber.Ctx) error {
 	})
 }
 
+// listTenantAuditLogs returns audit logs strictly scoped to the tenant
+func listTenantAuditLogs(c *fiber.Ctx) error {
+	tenantID, ok := c.Locals("tenant_id").(uint)
+	if !ok || tenantID == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "invalid tenant context")
+	}
+
+	query := db.Model(&AuditLog{}).Where("tenant_id = ?", tenantID)
+
+	if action := strings.TrimSpace(c.Query("action")); action != "" {
+		query = query.Where("action = ?", action)
+	}
+
+	if entity := strings.TrimSpace(c.Query("entity")); entity != "" {
+		query = query.Where("entity = ?", entity)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to count audit logs")
+	}
+
+	page := 1
+	if pStr := c.Query("page"); pStr != "" {
+		if p, err := strconv.Atoi(pStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+
+	limit := 50
+	if lStr := c.Query("limit"); lStr != "" {
+		if l, err := strconv.Atoi(lStr); err == nil && l > 0 {
+			if l > 100 {
+				limit = 100
+			} else {
+				limit = l
+			}
+		}
+	}
+
+	offset := (page - 1) * limit
+	var logs []AuditLog
+	if err := query.Order("at DESC").Offset(offset).Limit(limit).Find(&logs).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to query audit logs")
+	}
+
+	return c.JSON(PaginatedAuditResponse{
+		Logs:  logs,
+		Total: total,
+		Page:  page,
+		Limit: limit,
+	})
+}
+

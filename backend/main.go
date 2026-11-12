@@ -187,6 +187,7 @@ func main() {
 	admin.Patch("/users/:id/permissions", tenantAdminMiddleware, updateUserPermissionsHandler)
 	admin.Patch("/users/:id/status", tenantAdminMiddleware, updateUserStatusHandler)
 	admin.Post("/users/:id/reset-password", tenantAdminMiddleware, resetUserPasswordHandler)
+	admin.Get("/audit", tenantAdminMiddleware, listTenantAuditLogs)
 
 	// Graceful shutdown handling
 	go func() {

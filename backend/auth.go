@@ -181,14 +181,17 @@ func loginHandler(c *fiber.Ctx) error {
 
 	var user User
 	if err := db.Where("email = ? AND tenant_id = ?", strings.ToLower(strings.TrimSpace(req.Email)), tenant.ID).First(&user).Error; err != nil {
+		recordAuditLog(0, "anonymous", tenant.ID, "login_failure", "auth", 0, c.IP())
 		return fiber.NewError(fiber.StatusUnauthorized, "invalid credentials")
 	}
 
 	if user.Status == "disabled" {
+		recordAuditLog(user.ID, user.Role, tenant.ID, "login_failure_disabled", "auth", user.ID, c.IP())
 		return fiber.NewError(fiber.StatusForbidden, "account is disabled; please contact your administrator")
 	}
 
 	if !checkPasswordHash(req.Password, user.Password) {
+		recordAuditLog(user.ID, user.Role, tenant.ID, "login_failure", "auth", user.ID, c.IP())
 		return fiber.NewError(fiber.StatusUnauthorized, "invalid credentials")
 	}
 
@@ -196,6 +199,7 @@ func loginHandler(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to create token")
 	}
+	recordAuditLog(user.ID, user.Role, user.TenantID, "login_success", "auth", user.ID, c.IP())
 	return c.JSON(authResponse{Token: tok})
 }
 
@@ -210,14 +214,17 @@ func platformLoginHandler(c *fiber.Ctx) error {
 
 	var user User
 	if err := db.Where("email = ? AND role = ?", strings.ToLower(strings.TrimSpace(req.Email)), RolePlatformAdmin).First(&user).Error; err != nil {
+		recordAuditLog(0, "anonymous", 0, "login_failure", "platform_auth", 0, c.IP())
 		return fiber.NewError(fiber.StatusUnauthorized, "invalid credentials")
 	}
 
 	if user.Status == "disabled" {
+		recordAuditLog(user.ID, user.Role, 0, "login_failure_disabled", "platform_auth", user.ID, c.IP())
 		return fiber.NewError(fiber.StatusForbidden, "account is disabled")
 	}
 
 	if !checkPasswordHash(req.Password, user.Password) {
+		recordAuditLog(user.ID, user.Role, 0, "login_failure", "platform_auth", user.ID, c.IP())
 		return fiber.NewError(fiber.StatusUnauthorized, "invalid credentials")
 	}
 
@@ -225,6 +232,7 @@ func platformLoginHandler(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to create token")
 	}
+	recordAuditLog(user.ID, user.Role, 0, "login_success", "platform_auth", user.ID, c.IP())
 	return c.JSON(authResponse{Token: tok})
 }
 
@@ -276,6 +284,7 @@ func bootstrapPlatformAdmin(appEnv string) {
 		log.Printf("[bootstrap error] Failed to create bootstrap platform admin: %v", err)
 		return
 	}
+	recordAuditLog(admin.ID, RolePlatformAdmin, 0, "create_platform_admin", "user", admin.ID, "bootstrap")
 	if !strings.EqualFold(appEnv, "development") {
 		log.Printf("[SECURITY WARNING] Created initial platform admin '%s' from environment variables. PLEASE REMOVE PLATFORM_ADMIN_EMAIL and PLATFORM_ADMIN_PASSWORD from your environment immediately!", platEmail)
 	}
@@ -424,6 +433,8 @@ func changePasswordHandler(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to update password")
 	}
 
+	recordAuditLog(user.ID, user.Role, user.TenantID, "change_password", "user", user.ID, c.IP())
+
 	return c.JSON(fiber.Map{"message": "password changed successfully"})
 }
 
@@ -480,6 +491,8 @@ func runCreatePlatformAdminCLI(args []string) {
 		fmt.Fprintf(os.Stderr, "Error creating platform admin in database: %v\n", err)
 		os.Exit(1)
 	}
+
+	recordAuditLog(admin.ID, RolePlatformAdmin, 0, "create_platform_admin", "user", admin.ID, "cli")
 
 	fmt.Printf("Successfully created platform admin: %s\n", cleanEmail)
 	os.Exit(0)
