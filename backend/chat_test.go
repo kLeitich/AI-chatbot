@@ -296,3 +296,53 @@ func TestChatEmergencyResponseFlags(t *testing.T) {
 	}
 }
 
+func TestChatInactiveDoctorRejected(t *testing.T) {
+	app, sessionID := setupTestApp(t)
+
+	// Create an inactive doctor in default tenant (tenantID = 1)
+	inactiveDoc := Doctor{
+		TenantID:  1,
+		Name:      "Dr. Ghost",
+		WorkDays:  "Mon,Tue,Wed,Thu,Fri",
+		WorkStart: "09:00",
+		WorkEnd:   "17:00",
+		Active:    false,
+	}
+	db.Create(&inactiveDoc)
+	db.Model(&inactiveDoc).Update("active", false)
+
+	// Expecting doctor
+	convKey := "default:" + sessionID
+	setConversation(convKey, ConversationState{
+		Expecting: "doctor",
+		Draft: Appointment{
+			TenantID:    1,
+			PatientName: "Alice",
+		},
+	})
+
+	// Send inactive doctor name
+	reqBody, _ := json.Marshal(ChatRequest{
+		Message:   "Dr. Ghost",
+		SessionID: sessionID,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/t/default/chat", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+
+	var chatResp ChatResponse
+	_ = json.NewDecoder(resp.Body).Decode(&chatResp)
+
+	// Reply must state couldn't find doctor and list active doctors
+	if !strings.Contains(strings.ToLower(chatResp.Reply), "couldn't find a doctor") {
+		t.Errorf("Expected reply to reject inactive doctor, got: %s", chatResp.Reply)
+	}
+	if strings.Contains(chatResp.Reply, "Dr. Ghost") && !strings.Contains(chatResp.Reply, "couldn't find") {
+		t.Errorf("Inactive doctor should not be listed as available, got: %s", chatResp.Reply)
+	}
+}
+

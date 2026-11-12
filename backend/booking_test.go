@@ -464,3 +464,40 @@ func TestAdminBookingConflictReturns409WithAlternatives(t *testing.T) {
 	}
 }
 
+func TestBookingInactiveDoctorRejected(t *testing.T) {
+	tenantID := setupTestDB(t)
+	dateStr, _ := getFutureWeekday(time.Wednesday, 7)
+
+	inactiveDoc := Doctor{
+		TenantID:  tenantID,
+		Name:      "Dr. Inactive",
+		WorkDays:  "Mon,Tue,Wed,Thu,Fri",
+		WorkStart: "09:00",
+		WorkEnd:   "17:00",
+		Active:    false,
+	}
+	db.Create(&inactiveDoc)
+	db.Model(&inactiveDoc).Update("active", false)
+
+	app := &Appointment{
+		TenantID:    tenantID,
+		Doctor:      "Dr. Inactive",
+		Date:        dateStr,
+		Time:        "10:00",
+		PatientName: "Test Patient",
+		Reason:      "Checkup",
+	}
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		_, err := bookSlot(tx, tenantID, app)
+		return err
+	})
+	if err == nil {
+		t.Fatalf("Expected booking with inactive doctor to fail, but it succeeded")
+	}
+	if !strings.Contains(err.Error(), "not recognized") {
+		t.Errorf("Expected 'not recognized' error, got: %v", err)
+	}
+}
+
+
