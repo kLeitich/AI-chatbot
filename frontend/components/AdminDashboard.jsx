@@ -7,6 +7,7 @@ import AppointmentTable from './AppointmentTable'
 import Calendar from './Calendar'
 import DashboardNav from './DashboardNav'
 import TeamManagement from './TeamManagement'
+import ClinicSetup from './ClinicSetup'
 
 export default function AdminDashboard({ tenant = 'default' }) {
   const permCtx = usePermissions()
@@ -155,6 +156,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
   const canEditAppointments = can('appointments.edit')
   const canCancelAppointments = can('appointments.cancel')
   const canDeleteAppointments = can('appointments.delete')
+  const canAccessSetup = can('doctors.manage') || can('reasons.manage') || can('settings.manage')
 
   const filtered = useMemo(() => {
     const match = (val, q) => String(val || '').toLowerCase().includes(String(q || '').toLowerCase())
@@ -341,7 +343,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
       <div className="max-w-5xl mx-auto p-4 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {view !== 'team' && canCreateAppointments && (
+            {view !== 'team' && view !== 'setup' && canCreateAppointments && (
               <button className="px-3 py-1 rounded bg-blue-600 text-white font-medium text-sm" onClick={onAddFromTable}>
                 + New Appointment
               </button>
@@ -353,6 +355,9 @@ export default function AdminDashboard({ tenant = 'default' }) {
                   <button className={`px-3 py-1 text-sm ${view === 'table' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('table')}>Table</button>
                   <button className={`px-3 py-1 text-sm ${view === 'calendar' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('calendar')}>Calendar</button>
                 </>
+              )}
+              {canAccessSetup && (
+                <button className={`px-3 py-1 text-sm font-medium ${view === 'setup' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('setup')}>Clinic Setup</button>
               )}
               {isTenantAdmin && (
                 <button className={`px-3 py-1 text-sm font-medium ${view === 'team' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('team')}>Team</button>
@@ -370,6 +375,8 @@ export default function AdminDashboard({ tenant = 'default' }) {
 
         {view === 'team' ? (
           <TeamManagement tenant={tenant} />
+        ) : view === 'setup' ? (
+          <ClinicSetup tenant={tenant} />
         ) : (
           <>
             {view === 'table' && (
