@@ -4,15 +4,19 @@ import DashboardNav from '../../../components/DashboardNav'
 import api from '../../../lib/api'
 
 export default function PlatformDashboardPage() {
-  const [tab, setTab] = useState('tenants') // 'tenants' | 'users' | 'appointments' | 'audit'
+  const [tab, setTab] = useState('tenants') // 'tenants' | 'users' | 'doctors' | 'appointments' | 'audit'
 
   // Data states
   const [tenants, setTenants] = useState([])
   const [users, setUsers] = useState([])
+  const [doctors, setDoctors] = useState([])
   const [appointmentsData, setAppointmentsData] = useState({ appointments: [], total: 0, page: 1, limit: 20 })
   const [auditData, setAuditData] = useState({ logs: [], total: 0, page: 1, limit: 50 })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
+  // Doctor filter
+  const [docTenantFilter, setDocTenantFilter] = useState('')
 
   // Appointment filters
   const [apTenantFilter, setApTenantFilter] = useState('')
@@ -40,6 +44,17 @@ export default function PlatformDashboardPage() {
     try {
       const res = await api.get('/platform/users')
       setUsers(res.data || [])
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const loadDoctors = async () => {
+    try {
+      const params = new URLSearchParams()
+      if (docTenantFilter) params.set('tenant_id', docTenantFilter)
+      const res = await api.get(`/platform/doctors?${params.toString()}`)
+      setDoctors(res.data || [])
     } catch (err) {
       console.error(err)
     }
@@ -83,7 +98,7 @@ export default function PlatformDashboardPage() {
       setLoading(true)
       setError('')
       try {
-        await Promise.all([loadTenants(), loadUsers(), loadAppointments(), loadAuditLogs()])
+        await Promise.all([loadTenants(), loadUsers(), loadDoctors(), loadAppointments(), loadAuditLogs()])
       } catch (err) {
         setError('Failed to load platform data. Please check authentication.')
       } finally {
@@ -92,6 +107,10 @@ export default function PlatformDashboardPage() {
     }
     init()
   }, [])
+
+  useEffect(() => {
+    if (tab === 'doctors') loadDoctors()
+  }, [docTenantFilter, tab])
 
   useEffect(() => {
     if (tab === 'appointments') loadAppointments()
@@ -143,6 +162,14 @@ export default function PlatformDashboardPage() {
             Users ({users.length})
           </button>
           <button
+            onClick={() => setTab('doctors')}
+            className={`pb-3 border-b-2 transition ${
+              tab === 'doctors' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            Doctors ({doctors.length})
+          </button>
+          <button
             onClick={() => setTab('appointments')}
             className={`pb-3 border-b-2 transition ${
               tab === 'appointments' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -186,6 +213,20 @@ export default function PlatformDashboardPage() {
                         <strong className="text-base text-slate-800">{t.appointment_count || 0}</strong>
                       </div>
                     </div>
+                    {/* Read-Only Emergency Settings Display */}
+                    <div className="pt-2 border-t space-y-1 text-xs">
+                      <div className="flex justify-between items-center text-slate-600">
+                        <span className="text-slate-500 font-medium">Emergency Number:</span>
+                        <span className="font-mono font-semibold text-slate-800">
+                          {t.emergency_number || '999 (default)'}
+                        </span>
+                      </div>
+                      {t.emergency_message && (
+                        <div className="text-slate-600 bg-slate-50 p-2 rounded text-[11px] italic border border-slate-100">
+                          &ldquo;{t.emergency_message}&rdquo;
+                        </div>
+                      )}
+                    </div>
                     <p className="text-xs text-slate-400">Created: {new Date(t.created_at).toLocaleDateString()}</p>
                   </div>
                 ))}
@@ -227,6 +268,81 @@ export default function PlatformDashboardPage() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+
+            {/* Tab: Doctors (Read-Only) */}
+            {tab === 'doctors' && (
+              <div className="space-y-4">
+                <div className="rounded-xl border bg-white p-4 shadow-sm flex flex-wrap items-center gap-3">
+                  <label className="text-xs font-medium text-slate-600">Filter by Clinic:</label>
+                  <select
+                    value={docTenantFilter}
+                    onChange={(e) => setDocTenantFilter(e.target.value)}
+                    className="border rounded-lg p-2 text-xs bg-white text-slate-800"
+                  >
+                    <option value="">All Clinics</option>
+                    {tenants.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} (ID: {t.id})
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-xs text-slate-400 ml-auto font-mono">
+                    Showing {doctors.length} doctor{doctors.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-slate-100 text-slate-700">
+                      <tr>
+                        <th className="p-3 text-left">Doctor ID</th>
+                        <th className="p-3 text-left">Clinic ID</th>
+                        <th className="p-3 text-left">Name</th>
+                        <th className="p-3 text-left">Specialty</th>
+                        <th className="p-3 text-left">Working Days</th>
+                        <th className="p-3 text-left">Hours</th>
+                        <th className="p-3 text-left">Slot</th>
+                        <th className="p-3 text-left">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {doctors.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="p-6 text-center text-slate-500">
+                            No doctors found matching filters.
+                          </td>
+                        </tr>
+                      ) : (
+                        doctors.map((d) => (
+                          <tr key={d.id} className="hover:bg-slate-50">
+                            <td className="p-3 font-mono text-xs text-slate-500">#{d.id}</td>
+                            <td className="p-3 font-mono text-xs text-slate-600">{d.tenant_id}</td>
+                            <td className="p-3 font-medium text-slate-900">{d.name}</td>
+                            <td className="p-3 text-slate-600">{d.specialty || '-'}</td>
+                            <td className="p-3 text-slate-600 text-xs">
+                              {Array.isArray(d.work_days) ? d.work_days.join(', ') : d.work_days || 'Mon - Fri'}
+                            </td>
+                            <td className="p-3 text-slate-600 text-xs">
+                              {d.work_start && d.work_end ? `${d.work_start} - ${d.work_end}` : '09:00 - 17:00'}
+                            </td>
+                            <td className="p-3 text-slate-600 text-xs">{d.slot_minutes || 30}m</td>
+                            <td className="p-3">
+                              <span
+                                className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                                  d.active !== false ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-600'
+                                }`}
+                              >
+                                {d.active !== false ? 'Active' : 'Inactive'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
