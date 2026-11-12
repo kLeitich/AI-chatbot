@@ -4,6 +4,17 @@ const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080',
 })
 
+export const nav = {
+  redirect: (url) => {
+    if (typeof window !== 'undefined') {
+      window.location.href = url
+    }
+  },
+  getPathname: () => {
+    return typeof window !== 'undefined' ? window.location.pathname : ''
+  },
+}
+
 api.interceptors.request.use((config) => {
   if (typeof window !== 'undefined') {
     const token = localStorage.getItem('token')
@@ -52,11 +63,10 @@ api.interceptors.response.use(
     }
 
     const { status, data } = error.response
-    const code = data?.code
     const message = data?.message || error.message
 
     if (typeof window !== 'undefined') {
-      const pathname = window.location.pathname || ''
+      const pathname = nav.getPathname() || ''
       const isLoginPage = pathname.includes('/login')
       const isLoginRequest = error.config?.url?.includes('/login')
 
@@ -68,12 +78,12 @@ api.interceptors.response.use(
 
         const isPlatform = pathname.startsWith('/platform') || error.config?.url?.startsWith('/platform')
         if (isPlatform) {
-          window.location.href = '/platform/login?notice=session_ended'
+          nav.redirect('/platform/login?notice=session_ended')
         } else {
           const tenantMatch =
             pathname.match(/^\/t\/([^/]+)/) || (error.config?.url && error.config.url.match(/^\/t\/([^/]+)/))
           const tenant = tenantMatch ? tenantMatch[1] : (localStorage.getItem('tenant') || 'default')
-          window.location.href = `/t/${tenant}/login?notice=session_ended`
+          nav.redirect(`/t/${tenant}/login?notice=session_ended`)
         }
         return Promise.reject(error)
       }
