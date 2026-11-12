@@ -15,7 +15,47 @@ function Toast({ text, onClose }) {
 }
 
 function EmergencyCard({ text, emergencyNumber }) {
-  const primaryNumber = emergencyNumber && emergencyNumber.trim() ? emergencyNumber.trim() : '999'
+  const rawClinic = emergencyNumber && emergencyNumber.trim() ? emergencyNumber.trim() : ''
+  const cleanClinic = rawClinic.replace(/[\s-]/g, '')
+
+  const buttons = []
+  if (
+    cleanClinic &&
+    cleanClinic !== '999' &&
+    cleanClinic !== '112' &&
+    cleanClinic !== '+999' &&
+    cleanClinic !== '+112'
+  ) {
+    buttons.push({
+      href: `tel:${cleanClinic}`,
+      label: `📞 Call Clinic (${rawClinic})`,
+      className:
+        'inline-flex items-center gap-2 px-4 py-2 bg-white text-red-800 font-bold rounded-lg shadow hover:bg-red-50 text-sm focus:outline-none focus:ring-2 focus:ring-white transition',
+    })
+  }
+
+  buttons.push({
+    href: 'tel:999',
+    label: '📞 Call 999',
+    className:
+      'inline-flex items-center gap-2 px-4 py-2 bg-white text-red-800 font-bold rounded-lg shadow hover:bg-red-50 text-sm focus:outline-none focus:ring-2 focus:ring-white transition',
+  })
+
+  buttons.push({
+    href: 'tel:112',
+    label: '📞 Call 112',
+    className:
+      'inline-flex items-center gap-2 px-4 py-2 bg-red-900 text-white font-bold rounded-lg shadow hover:bg-red-950 text-sm border border-red-600 focus:outline-none focus:ring-2 focus:ring-white transition',
+  })
+
+  // Deduplicate by href
+  const seen = new Set()
+  const dedupedButtons = buttons.filter((b) => {
+    if (seen.has(b.href)) return false
+    seen.add(b.href)
+    return true
+  })
+
   return (
     <div className="w-full bg-red-700 text-white p-4 rounded-xl border-2 border-red-900 shadow-lg space-y-3" role="alert">
       <div className="flex items-center gap-2">
@@ -24,26 +64,11 @@ function EmergencyCard({ text, emergencyNumber }) {
       </div>
       <p className="text-sm text-red-50 font-medium whitespace-pre-line leading-relaxed">{text}</p>
       <div className="pt-2 border-t border-red-600/60 flex flex-wrap gap-2">
-        {primaryNumber !== '999' && primaryNumber !== '112' && (
-          <a
-            href={`tel:${primaryNumber}`}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-white text-red-800 font-bold rounded-lg shadow hover:bg-red-50 text-sm focus:outline-none focus:ring-2 focus:ring-white transition"
-          >
-            📞 Call Clinic ({primaryNumber})
+        {dedupedButtons.map((btn) => (
+          <a key={btn.href} href={btn.href} className={btn.className}>
+            {btn.label}
           </a>
-        )}
-        <a
-          href="tel:999"
-          className="inline-flex items-center gap-2 px-4 py-2 bg-white text-red-800 font-bold rounded-lg shadow hover:bg-red-50 text-sm focus:outline-none focus:ring-2 focus:ring-white transition"
-        >
-          📞 Call 999
-        </a>
-        <a
-          href="tel:112"
-          className="inline-flex items-center gap-2 px-4 py-2 bg-red-900 text-white font-bold rounded-lg shadow hover:bg-red-950 text-sm border border-red-600 focus:outline-none focus:ring-2 focus:ring-white transition"
-        >
-          📞 Call 112
-        </a>
+        ))}
       </div>
     </div>
   )
@@ -99,11 +124,6 @@ export default function Chatbot({ tenant = 'default' }) {
     }
   }
 
-  const isEmergencyReply = (txt) => {
-    if (!txt) return false
-    return /\b(999|112|emergency|immediately|urgent medical)\b/i.test(txt)
-  }
-
   const send = async () => {
     if (!input.trim()) return
     const userText = input.trim()
@@ -120,7 +140,7 @@ export default function Chatbot({ tenant = 'default' }) {
         localStorage.setItem('chat_session_id_' + tenant, session_id)
       }
       const aiText = reply || message || "Hmm, I didn’t catch that."
-      const isEmergency = Boolean(emergency) || isEmergencyReply(aiText)
+      const isEmergency = Boolean(emergency)
 
       setMessages((prev) => [
         ...prev,

@@ -56,6 +56,52 @@ describe('Chatbot Component', () => {
     expect(call112).toHaveAttribute('href', 'tel:112')
   })
 
+  it('deduplicates call buttons when clinic emergency number is 999 or 112', async () => {
+    api.post.mockResolvedValueOnce({
+      data: {
+        reply: 'Emergency help.',
+        emergency: true,
+        emergency_number: '999',
+        session_id: 'sess-123',
+      },
+    })
+
+    render(<Chatbot tenant="test-clinic" />)
+    const input = screen.getByPlaceholderText(/Book me with Dr./i)
+    fireEvent.change(input, { target: { value: 'help' } })
+    fireEvent.click(screen.getByRole('button', { name: /Send/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+    })
+
+    // Should only have one 999 link and one 112 link, no "Call Clinic"
+    const call999Links = screen.getAllByRole('link', { name: /999/i })
+    expect(call999Links).toHaveLength(1)
+    expect(screen.queryByRole('link', { name: /Call Clinic/i })).not.toBeInTheDocument()
+  })
+
+  it('does NOT render emergency card when response.emergency is false even if reply has keywords', async () => {
+    api.post.mockResolvedValueOnce({
+      data: {
+        reply: 'In case of an emergency, our clinic operates 24/7.',
+        emergency: false,
+        session_id: 'sess-123',
+      },
+    })
+
+    render(<Chatbot tenant="test-clinic" />)
+    const input = screen.getByPlaceholderText(/Book me with Dr./i)
+    fireEvent.change(input, { target: { value: 'Are you open for emergencies?' } })
+    fireEvent.click(screen.getByRole('button', { name: /Send/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/In case of an emergency, our clinic operates 24\/7/i)).toBeInTheDocument()
+    })
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   it('clears session id and resets conversation when Start New Conversation is clicked', async () => {
     localStorage.setItem('chat_session_id_test-clinic', 'sess-old-789')
 
