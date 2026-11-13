@@ -1,9 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -807,9 +812,20 @@ func choose(a, b string) string {
 	return b
 }
 
-type TenantSettings struct {
-	EmergencyNumber  string `json:"emergency_number"`
-	EmergencyMessage string `json:"emergency_message"`
+type TenantSettingsRequest struct {
+	EmergencyNumber     *string   `json:"emergency_number"`
+	EmergencyMessage    *string   `json:"emergency_message"`
+	BookingLinkEnabled  *bool     `json:"booking_link_enabled"`
+	AllowedEmbedOrigins *[]string `json:"allowed_embed_origins"`
+	PrivacyURL          *string   `json:"privacy_url"`
+}
+
+type TenantSettingsResponse struct {
+	EmergencyNumber     string   `json:"emergency_number"`
+	EmergencyMessage    string   `json:"emergency_message"`
+	BookingLinkEnabled  bool     `json:"booking_link_enabled"`
+	AllowedEmbedOrigins []string `json:"allowed_embed_origins"`
+	PrivacyURL          string   `json:"privacy_url,omitempty"`
 }
 
 var emergencyNumberRegex = regexp.MustCompile(`^[0-9+ ]{0,20}$`)
@@ -824,6 +840,111 @@ func stripControlChars(s string) string {
 	return b.String()
 }
 
+func isValidDomainLabel(label string) bool {
+	if len(label) == 0 || len(label) > 63 {
+		return false
+	}
+	for i, r := range label {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			continue
+		}
+		if r == '-' && i > 0 && i < len(label)-1 {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validateOrigin(raw string, isDev bool) (string, error) {
+	orig := strings.ToLower(strings.TrimSpace(raw))
+	if orig == "" {
+		return "", errors.New("origin cannot be empty")
+	}
+
+	// Must not have trailing slash, query, or path
+	if strings.HasSuffix(orig, "/") || strings.Contains(orig, "?") || strings.Contains(orig, "#") {
+		return "", errors.New("origin must not contain paths, queries, fragments or trailing slashes")
+	}
+
+	// In development only: http://localhost[:port]
+	if strings.HasPrefix(orig, "http://localhost") {
+		if !isDev {
+			return "", errors.New("http://localhost is only allowed in development environment")
+		}
+		rest := strings.TrimPrefix(orig, "http://localhost")
+		if rest != "" {
+			if !strings.HasPrefix(rest, ":") {
+				return "", errors.New("invalid localhost origin")
+			}
+			portStr := rest[1:]
+			port, err := strconv.Atoi(portStr)
+			if err != nil || port <= 0 || port > 65535 {
+				return "", errors.New("invalid port number on localhost")
+			}
+		}
+		return orig, nil
+	}
+
+	if !strings.HasPrefix(orig, "https://") {
+		return "", errors.New("origin must use https://")
+	}
+
+	hostPart := strings.TrimPrefix(orig, "https://")
+	if hostPart == "" {
+		return "", errors.New("missing host in origin")
+	}
+
+	if strings.Contains(hostPart, "/") {
+		return "", errors.New("origin must not contain a path")
+	}
+
+	host := hostPart
+	portStr := ""
+	if idx := strings.LastIndex(hostPart, ":"); idx != -1 {
+		host = hostPart[:idx]
+		portStr = hostPart[idx+1:]
+		if portStr == "" {
+			return "", errors.New("invalid port specification")
+		}
+		port, err := strconv.Atoi(portStr)
+		if err != nil || port <= 0 || port > 65535 {
+			return "", errors.New("invalid port number")
+		}
+	}
+
+	if strings.Contains(host, "*") {
+		if !strings.HasPrefix(host, "*.") {
+			return "", errors.New("wildcard '*' is only allowed as the leading label, e.g. https://*.example.com")
+		}
+		if strings.Count(host, "*") > 1 {
+			return "", errors.New("multiple wildcards are not allowed")
+		}
+		remainingDomain := host[2:]
+		if remainingDomain == "" || strings.Contains(remainingDomain, "*") || strings.HasPrefix(remainingDomain, ".") || strings.HasSuffix(remainingDomain, ".") {
+			return "", errors.New("invalid wildcard host pattern")
+		}
+		labels := strings.Split(remainingDomain, ".")
+		for _, label := range labels {
+			if !isValidDomainLabel(label) {
+				return "", fmt.Errorf("invalid domain label '%s'", label)
+			}
+		}
+	} else {
+		labels := strings.Split(host, ".")
+		for _, label := range labels {
+			if !isValidDomainLabel(label) {
+				return "", fmt.Errorf("invalid domain label '%s'", label)
+			}
+		}
+	}
+
+	if portStr != "" {
+		return fmt.Sprintf("https://%s:%s", host, portStr), nil
+	}
+	return fmt.Sprintf("https://%s", host), nil
+}
+
 func getTenantSettingsHandler(c *fiber.Ctx) error {
 	tenantSlug := c.Params("tenant")
 	var tenant Tenant
@@ -831,9 +952,12 @@ func getTenantSettingsHandler(c *fiber.Ctx) error {
 		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "tenant not found")
 	}
 
-	return c.JSON(TenantSettings{
-		EmergencyNumber:  tenant.EmergencyNumber,
-		EmergencyMessage: tenant.EmergencyMessage,
+	return c.JSON(TenantSettingsResponse{
+		EmergencyNumber:     tenant.EmergencyNumber,
+		EmergencyMessage:    tenant.EmergencyMessage,
+		BookingLinkEnabled:  tenant.BookingLinkEnabled,
+		AllowedEmbedOrigins: tenant.GetAllowedEmbedOrigins(),
+		PrivacyURL:          tenant.PrivacyURL,
 	})
 }
 
@@ -844,23 +968,71 @@ func updateTenantSettingsHandler(c *fiber.Ctx) error {
 		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "tenant not found")
 	}
 
-	var req TenantSettings
-	if err := c.BodyParser(&req); err != nil {
-		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "invalid request body")
+	// Reject unknown JSON fields with 400 VALIDATION_ERROR
+	dec := json.NewDecoder(bytes.NewReader(c.Body()))
+	dec.DisallowUnknownFields()
+
+	var req TenantSettingsRequest
+	if err := dec.Decode(&req); err != nil {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, fmt.Sprintf("invalid settings request: %v", err))
 	}
 
-	cleanNum := strings.TrimSpace(req.EmergencyNumber)
-	if len(cleanNum) > 20 || !emergencyNumberRegex.MatchString(cleanNum) {
-		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "emergency_number may only contain digits, '+', and spaces, max 20 characters")
+	if req.EmergencyNumber != nil {
+		cleanNum := strings.TrimSpace(*req.EmergencyNumber)
+		if len(cleanNum) > 20 || !emergencyNumberRegex.MatchString(cleanNum) {
+			return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "emergency_number may only contain digits, '+', and spaces, max 20 characters")
+		}
+		tenant.EmergencyNumber = cleanNum
 	}
 
-	cleanMsg := stripControlChars(req.EmergencyMessage)
-	if len(cleanMsg) > 500 {
-		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "emergency_message must be at most 500 characters")
+	if req.EmergencyMessage != nil {
+		cleanMsg := stripControlChars(*req.EmergencyMessage)
+		if len(cleanMsg) > 500 {
+			return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "emergency_message must be at most 500 characters")
+		}
+		tenant.EmergencyMessage = cleanMsg
 	}
 
-	tenant.EmergencyNumber = cleanNum
-	tenant.EmergencyMessage = cleanMsg
+	if req.BookingLinkEnabled != nil {
+		tenant.BookingLinkEnabled = *req.BookingLinkEnabled
+	}
+
+	if req.PrivacyURL != nil {
+		pURL := strings.TrimSpace(*req.PrivacyURL)
+		if pURL != "" {
+			if len(pURL) > 300 {
+				return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "privacy_url must be at most 300 characters")
+			}
+			parsed, err := url.Parse(pURL)
+			if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+				return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "privacy_url must be a valid https URL")
+			}
+		}
+		tenant.PrivacyURL = pURL
+	}
+
+	if req.AllowedEmbedOrigins != nil {
+		isDev := isDevelopmentEnv()
+		seen := make(map[string]bool)
+		deduped := make([]string, 0, len(*req.AllowedEmbedOrigins))
+
+		for _, raw := range *req.AllowedEmbedOrigins {
+			norm, err := validateOrigin(raw, isDev)
+			if err != nil {
+				return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, fmt.Sprintf("invalid allowed_embed_origin: %v", err))
+			}
+			if !seen[norm] {
+				seen[norm] = true
+				deduped = append(deduped, norm)
+			}
+		}
+
+		if len(deduped) > 10 {
+			return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "allowed_embed_origins exceeds maximum limit of 10")
+		}
+
+		tenant.SetAllowedEmbedOrigins(deduped)
+	}
 
 	if err := db.Save(&tenant).Error; err != nil {
 		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "failed to update settings")
@@ -870,8 +1042,11 @@ func updateTenantSettingsHandler(c *fiber.Ctx) error {
 	role, _ := c.Locals("role").(string)
 	recordAuditLog(userID, role, tenant.ID, "update", "settings", tenant.ID, c.IP())
 
-	return c.JSON(TenantSettings{
-		EmergencyNumber:  tenant.EmergencyNumber,
-		EmergencyMessage: tenant.EmergencyMessage,
+	return c.JSON(TenantSettingsResponse{
+		EmergencyNumber:     tenant.EmergencyNumber,
+		EmergencyMessage:    tenant.EmergencyMessage,
+		BookingLinkEnabled:  tenant.BookingLinkEnabled,
+		AllowedEmbedOrigins: tenant.GetAllowedEmbedOrigins(),
+		PrivacyURL:          tenant.PrivacyURL,
 	})
 }

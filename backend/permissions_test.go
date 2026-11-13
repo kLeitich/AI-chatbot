@@ -451,7 +451,7 @@ func TestTenantSettingsPermissionsAndValidation(t *testing.T) {
 		t.Fatalf("Expected 200 on valid settings patch, err: %v, status: %d", err, respValid.StatusCode)
 	}
 
-	var res TenantSettings
+	var res TenantSettingsResponse
 	json.NewDecoder(respValid.Body).Decode(&res)
 	if res.EmergencyNumber != "+254 700 000000" {
 		t.Errorf("Expected emergency_number='+254 700 000000', got %s", res.EmergencyNumber)

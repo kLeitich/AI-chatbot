@@ -42,8 +42,13 @@ func normalizeAndValidateAppEnv(rawEnv string) (string, error) {
 	}
 }
 
-// validateConfig validates application configuration based on environment.
-// Fails closed: unset APP_ENV is treated as production.
+// isDevelopmentEnv returns true if and only if APP_ENV is explicitly set to "development".
+// Fails closed to false if unset or set to any other environment.
+func isDevelopmentEnv() bool {
+	raw := os.Getenv("APP_ENV")
+	env, err := normalizeAndValidateAppEnv(raw)
+	return err == nil && env == "development"
+}
 func validateConfig(rawAppEnv, jwtSecret string) error {
 	appEnv, err := normalizeAndValidateAppEnv(rawAppEnv)
 	if err != nil {
