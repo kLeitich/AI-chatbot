@@ -1,19 +1,42 @@
 package main
 
 import (
+	"encoding/json"
 	"time"
 )
 
 // Tenant represents a logical clinic / organization in a multitenant setup.
 // All users, appointments and chat sessions are scoped to a tenant.
 type Tenant struct {
-	ID               uint      `gorm:"primaryKey" json:"id"`
-	Slug             string    `gorm:"uniqueIndex;size:100;not null" json:"slug"` // e.g. "default", "clinic-a"
-	Name             string    `gorm:"size:255;not null" json:"name"`
-	EmergencyNumber  string    `gorm:"size:100" json:"emergency_number,omitempty"`
-	EmergencyMessage string    `gorm:"size:500" json:"emergency_message,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID                  uint      `gorm:"primaryKey" json:"id"`
+	Slug                string    `gorm:"uniqueIndex;size:100;not null" json:"slug"` // e.g. "default", "clinic-a"
+	Name                string    `gorm:"size:255;not null" json:"name"`
+	EmergencyNumber     string    `gorm:"size:100" json:"emergency_number,omitempty"`
+	EmergencyMessage    string    `gorm:"size:500" json:"emergency_message,omitempty"`
+	BookingLinkEnabled  bool      `gorm:"default:true" json:"booking_link_enabled"`
+	AllowedEmbedOrigins string    `gorm:"type:text;default:'[]'" json:"allowed_embed_origins"`
+	PrivacyURL          string    `gorm:"size:300" json:"privacy_url,omitempty"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+func (t *Tenant) GetAllowedEmbedOrigins() []string {
+	if t.AllowedEmbedOrigins == "" || t.AllowedEmbedOrigins == "[]" {
+		return []string{}
+	}
+	var origins []string
+	if err := json.Unmarshal([]byte(t.AllowedEmbedOrigins), &origins); err != nil {
+		return []string{}
+	}
+	return origins
+}
+
+func (t *Tenant) SetAllowedEmbedOrigins(origins []string) {
+	if origins == nil {
+		origins = []string{}
+	}
+	data, _ := json.Marshal(origins)
+	t.AllowedEmbedOrigins = string(data)
 }
 
 type User struct {
@@ -46,6 +69,7 @@ type Appointment struct {
 	Time        string    `gorm:"size:5;not null" json:"time"`
 	Reason      string    `gorm:"size:500" json:"reason"`
 	Status      string    `gorm:"size:50;default:pending" json:"status"`
+	Source      *string   `gorm:"size:30" json:"source,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }

@@ -296,8 +296,10 @@ func companyRegisterHandler(c *fiber.Ctx) error {
 	}
 
 	tenant := Tenant{
-		Slug: tenantSlug,
-		Name: req.CompanyName,
+		Slug:                tenantSlug,
+		Name:                req.CompanyName,
+		BookingLinkEnabled:  true,
+		AllowedEmbedOrigins: "[]",
 	}
 	if err := db.Create(&tenant).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to create company")

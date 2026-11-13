@@ -158,6 +158,7 @@ func initDatabase(dbPath string, appEnv string) uint {
 	}
 
 	migrateUsersToPermissions()
+	backfillTenantSettings()
 
 	if strings.EqualFold(appEnv, "development") {
 		defaultTenantID := ensureDefaultTenant()
@@ -190,8 +191,10 @@ func ensureDefaultTenant() uint {
 	}
 
 	t = Tenant{
-		Slug: defaultTenantSlug,
-		Name: "Default Clinic",
+		Slug:                defaultTenantSlug,
+		Name:                "Default Clinic",
+		BookingLinkEnabled:  true,
+		AllowedEmbedOrigins: "[]",
 	}
 	if err := db.Create(&t).Error; err != nil {
 		log.Fatalf("failed to create default tenant: %v", err)
@@ -265,4 +268,12 @@ func seedSampleData(defaultTenantID uint) {
 			_ = db.Create(&r).Error
 		}
 	}
+}
+
+func backfillTenantSettings() {
+	if db == nil {
+		return
+	}
+	_ = db.Model(&Tenant{}).Where("allowed_embed_origins = '' OR allowed_embed_origins IS NULL").Update("allowed_embed_origins", "[]").Error
+	_ = db.Model(&Tenant{}).Where("booking_link_enabled IS NULL").Update("booking_link_enabled", true).Error
 }
