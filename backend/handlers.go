@@ -828,6 +828,15 @@ type TenantSettingsResponse struct {
 	PrivacyURL          string   `json:"privacy_url,omitempty"`
 }
 
+type TenantPublicConfigResponse struct {
+	Name                string   `json:"name"`
+	Slug                string   `json:"slug"`
+	BookingEnabled      bool     `json:"booking_enabled"`
+	EmergencyNumber     string   `json:"emergency_number"`
+	PrivacyURL          string   `json:"privacy_url"`
+	AllowedEmbedOrigins []string `json:"allowed_embed_origins"`
+}
+
 var emergencyNumberRegex = regexp.MustCompile(`^[0-9+ ]{0,20}$`)
 
 func stripControlChars(s string) string {
@@ -1048,5 +1057,31 @@ func updateTenantSettingsHandler(c *fiber.Ctx) error {
 		BookingLinkEnabled:  tenant.BookingLinkEnabled,
 		AllowedEmbedOrigins: tenant.GetAllowedEmbedOrigins(),
 		PrivacyURL:          tenant.PrivacyURL,
+	})
+}
+
+func getTenantPublicConfigHandler(c *fiber.Ctx) error {
+	tenantSlug := strings.TrimSpace(c.Params("tenant"))
+	if tenantSlug == "" {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "missing tenant")
+	}
+
+	var tenant Tenant
+	if err := db.Where("slug = ?", tenantSlug).First(&tenant).Error; err != nil {
+		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "tenant not found")
+	}
+
+	emergNum := tenant.EmergencyNumber
+	if strings.TrimSpace(emergNum) == "" {
+		emergNum = "999"
+	}
+
+	return c.JSON(TenantPublicConfigResponse{
+		Name:                tenant.Name,
+		Slug:                tenant.Slug,
+		BookingEnabled:      tenant.BookingLinkEnabled,
+		EmergencyNumber:     emergNum,
+		PrivacyURL:          tenant.PrivacyURL,
+		AllowedEmbedOrigins: tenant.GetAllowedEmbedOrigins(),
 	})
 }

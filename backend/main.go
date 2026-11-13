@@ -123,6 +123,17 @@ func main() {
 		},
 	})
 
+	publicConfigLimiter := limiter.New(limiter.Config{
+		Max:        60,
+		Expiration: 1 * time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP()
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return fiber.NewError(fiber.StatusTooManyRequests, "Too many requests. Please wait a minute.")
+		},
+	})
+
 	// CORS Configuration
 	frontendURL := getEnv("FRONTEND_URL", "http://localhost:3000")
 	allowedOrigins := "http://localhost:3000"
@@ -161,6 +172,7 @@ func main() {
 
 	// Tenant-scoped API under /t/:tenant/...
 	tenant := app.Group("/t/:tenant")
+	tenant.Get("/public-config", publicConfigLimiter, getTenantPublicConfigHandler)
 	tenant.Post("/chat", chatLimiter, chatHandler)
 	tenant.Post("/login", authLimiter, loginHandler)
 	tenant.Post("/change-password", jwtMiddleware, changePasswordHandler)
