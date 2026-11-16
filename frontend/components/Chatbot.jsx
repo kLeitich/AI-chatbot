@@ -100,6 +100,8 @@ export default function Chatbot({
   initialContext = null,
   isEmbed = false,
 }) {
+  const clinicName = publicConfig?.name || 'our clinic'
+  const privacyUrl = publicConfig?.privacy_url
   const greetingText = publicConfig?.name
     ? `Hi! Welcome to ${publicConfig.name}. I can book a doctor appointment for you. Tell me your details.`
     : 'Hi! I can book a doctor appointment. Tell me details.'
@@ -250,7 +252,25 @@ export default function Chatbot({
         <div ref={bottomRef} />
       </div>
 
-      <div className="mt-3 flex gap-2">
+      {/* Task B9 Disclosure above chat input */}
+      <div className="mt-2 text-xs text-slate-500 leading-relaxed">
+        This assistant collects your name, preferred time and reason for visit to book an appointment at {clinicName}. Messages are processed by an AI service.
+        {privacyUrl && (
+          <>
+            {' '}
+            <a
+              href={privacyUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline text-blue-600 hover:text-blue-800 font-medium"
+            >
+              Privacy Policy
+            </a>
+          </>
+        )}
+      </div>
+
+      <div className="mt-2 flex gap-2">
         <textarea
           value={input}
           maxLength={1000}
