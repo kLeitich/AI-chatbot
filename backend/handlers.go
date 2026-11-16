@@ -15,6 +15,26 @@ import (
 	"gorm.io/gorm"
 )
 
+var sourceRegex = regexp.MustCompile(`^[a-z0-9_-]{1,30}$`)
+
+func sanitizeSource(raw string) *string {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			b.WriteRune(r)
+		}
+	}
+	res := b.String()
+	if len(res) > 30 {
+		res = res[:30]
+	}
+	if len(res) == 0 {
+		return nil
+	}
+	return &res
+}
+
 func chatHandler(c *fiber.Ctx) error {
 	var req ChatRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -57,6 +77,25 @@ func chatHandler(c *fiber.Ctx) error {
 	}
 	if len(messageText) > 1000 {
 		messageText = messageText[:1000]
+	}
+
+	// Seed draft context deterministically on first message only
+	if conv.LastUserMessage == "" && req.Context != nil {
+		if req.Context.DoctorID != nil {
+			var doc Doctor
+			if err := db.Where("id = ? AND tenant_id = ? AND active = ?", *req.Context.DoctorID, tenant.ID, true).First(&doc).Error; err == nil {
+				conv.Draft.Doctor = doc.Name
+			}
+		}
+		if req.Context.ReasonID != nil {
+			var r ReasonOption
+			if err := db.Where("id = ? AND tenant_id = ? AND active = ?", *req.Context.ReasonID, tenant.ID, true).First(&r).Error; err == nil {
+				conv.Draft.Reason = r.Label
+			}
+		}
+		if req.Context.Source != nil {
+			conv.Draft.Source = sanitizeSource(*req.Context.Source)
+		}
 	}
 
 	// Emergency detector runs deterministic checks BEFORE any LLM call or state modification
@@ -117,6 +156,7 @@ func chatHandler(c *fiber.Ctx) error {
 				Time:        finalTime,
 				Reason:      finalReason,
 				Status:      StatusPending,
+				Source:      conv.Draft.Source,
 			}
 
 			// Validate at confirm time:

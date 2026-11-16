@@ -128,9 +128,16 @@ type ReasonOption struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type ChatContext struct {
+	DoctorID *uint   `json:"doctor_id"`
+	ReasonID *uint   `json:"reason_id"`
+	Source   *string `json:"source"`
+}
+
 type ChatRequest struct {
-	Message   string `json:"message"`
-	SessionID string `json:"session_id"`
+	Message   string       `json:"message"`
+	SessionID string       `json:"session_id"`
+	Context   *ChatContext `json:"context,omitempty"`
 }
 
 type ChatResponse struct {
