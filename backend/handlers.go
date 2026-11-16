@@ -49,7 +49,11 @@ func chatHandler(c *fiber.Ctx) error {
 
 	var tenant Tenant
 	if err := db.Where("slug = ?", tenantSlug).First(&tenant).Error; err != nil {
-		return fiber.NewError(fiber.StatusNotFound, "tenant not found")
+		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "tenant not found")
+	}
+
+	if !tenant.BookingLinkEnabled {
+		return sendError(c, fiber.StatusForbidden, ErrCodeBookingDisabled, "Online booking is currently disabled for this clinic.")
 	}
 
 	// Validate session ID or generate a cryptographically secure 128-bit ID
@@ -805,7 +809,7 @@ func getAvailability(c *fiber.Ctx) error {
 
 	var tenant Tenant
 	if err := db.Where("slug = ?", tenantSlug).First(&tenant).Error; err != nil {
-		return fiber.NewError(fiber.StatusNotFound, "tenant not found")
+		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "tenant not found")
 	}
 
 	date := strings.TrimSpace(c.Query("date"))

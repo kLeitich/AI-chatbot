@@ -346,3 +346,40 @@ func TestChatInactiveDoctorRejected(t *testing.T) {
 	}
 }
 
+func TestChatBookingDisabled(t *testing.T) {
+	app, sessionID := setupTestApp(t)
+
+	// Update default tenant to booking_link_enabled = false
+	var tenant Tenant
+	if err := db.Where("slug = ?", "default").First(&tenant).Error; err != nil {
+		t.Fatalf("Failed to find default tenant: %v", err)
+	}
+	if err := db.Model(&tenant).Update("booking_link_enabled", false).Error; err != nil {
+		t.Fatalf("Failed to update booking_link_enabled: %v", err)
+	}
+
+	reqBody, _ := json.Marshal(ChatRequest{
+		Message:   "hello",
+		SessionID: sessionID,
+	})
+	req := httptest.NewRequest("POST", "/t/default/chat", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("Expected 403 Forbidden, got %d", resp.StatusCode)
+	}
+
+	var errResp map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&errResp)
+	if errResp["code"] != ErrCodeBookingDisabled {
+		t.Errorf("Expected code=%s, got %v", ErrCodeBookingDisabled, errResp["code"])
+	}
+	if !strings.Contains(fmt.Sprint(errResp["message"]), "disabled") {
+		t.Errorf("Expected friendly disabled message, got %v", errResp["message"])
+	}
+}
+

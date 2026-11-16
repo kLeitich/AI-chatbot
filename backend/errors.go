@@ -17,6 +17,7 @@ const (
 	ErrCodeValidationError  = "VALIDATION_ERROR"
 	ErrCodeNotFound         = "NOT_FOUND"
 	ErrCodeServerError      = "SERVER_ERROR"
+	ErrCodeBookingDisabled  = "BOOKING_DISABLED"
 )
 
 // AppError is a structured error carrying an HTTP status code, message, and machine-readable error code
