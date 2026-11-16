@@ -94,8 +94,16 @@ function MessageBubble({ role, text, emergency, emergencyNumber }) {
   )
 }
 
-export default function Chatbot({ tenant = 'default' }) {
-  const initialGreeting = { role: 'ai', text: 'Hi! I can book a doctor appointment. Tell me details.' }
+export default function Chatbot({
+  tenant = 'default',
+  publicConfig = null,
+  initialContext = null,
+  isEmbed = false,
+}) {
+  const greetingText = publicConfig?.name
+    ? `Hi! Welcome to ${publicConfig.name}. I can book a doctor appointment for you. Tell me your details.`
+    : 'Hi! I can book a doctor appointment. Tell me details.'
+  const initialGreeting = { role: 'ai', text: greetingText }
   const [messages, setMessages] = useState([initialGreeting])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -125,19 +133,44 @@ export default function Chatbot({ tenant = 'default' }) {
   }
 
   const send = async () => {
-    if (!input.trim()) return
     const userText = input.trim()
+    if (!userText || loading) return
     setMessages((prev) => [...prev, { role: 'user', text: userText }])
     setInput('')
     setLoading(true)
     try {
       const payload = { message: userText }
       if (sessionId) payload.session_id = sessionId
+
+      // Pass context on the first user message only
+      const userMessageCount = messages.filter((m) => m.role === 'user').length
+      if (userMessageCount === 0 && initialContext) {
+        const ctx = {}
+        const rawDoc = initialContext.doctor_id ?? initialContext.doctor
+        if (rawDoc !== undefined && rawDoc !== null && rawDoc !== '') {
+          const docId = Number(rawDoc)
+          if (!isNaN(docId) && docId > 0) ctx.doctor_id = docId
+        }
+        const rawReason = initialContext.reason_id ?? initialContext.reason
+        if (rawReason !== undefined && rawReason !== null && rawReason !== '') {
+          const rId = Number(rawReason)
+          if (!isNaN(rId) && rId > 0) ctx.reason_id = rId
+        }
+        if (initialContext.source && String(initialContext.source).trim()) {
+          ctx.source = String(initialContext.source).trim()
+        }
+        if (Object.keys(ctx).length > 0) {
+          payload.context = ctx
+        }
+      }
+
       const res = await api.post(`/t/${tenant}/chat`, payload)
       const { message, reply, appointment, session_id, emergency, emergency_category, emergency_number } = res.data || {}
       if (session_id) {
         setSessionId(session_id)
-        localStorage.setItem('chat_session_id_' + tenant, session_id)
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('chat_session_id_' + tenant, session_id)
+        }
       }
       const aiText = reply || message || "Hmm, I didn’t catch that."
       const isEmergency = Boolean(emergency)
@@ -154,13 +187,23 @@ export default function Chatbot({ tenant = 'default' }) {
       ])
       if (appointment) setToast('Appointment created!')
     } catch (e) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'ai',
-          text: "I'm having trouble connecting right now. Please check your connection and try sending your message again.",
-        },
-      ])
+      if (e.response?.data?.code === 'BOOKING_DISABLED') {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'ai',
+            text: e.response.data.message || 'Online booking is currently disabled for this clinic.',
+          },
+        ])
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'ai',
+            text: "I'm having trouble connecting right now. Please check your connection and try sending your message again.",
+          },
+        ])
+      }
     } finally {
       setLoading(false)
     }
@@ -174,9 +217,11 @@ export default function Chatbot({ tenant = 'default' }) {
   }
 
   return (
-    <div className="max-w-3xl mx-auto p-4">
+    <div className={isEmbed ? 'w-full h-full flex flex-col p-3 sm:p-4 bg-white' : 'max-w-3xl mx-auto p-4'}>
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-semibold text-gray-900">AI Doctor Appointment Chatbot</h1>
+        <h1 className="text-2xl font-semibold text-gray-900">
+          {publicConfig?.name ? publicConfig.name : 'AI Doctor Appointment Chatbot'}
+        </h1>
         <button
           onClick={startNewConversation}
           className="text-xs sm:text-sm px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 transition"
@@ -185,7 +230,7 @@ export default function Chatbot({ tenant = 'default' }) {
         </button>
       </div>
 
-      <div className="border rounded bg-white h-[60vh] p-4 overflow-y-auto space-y-3 shadow">
+      <div className={`border rounded bg-white p-4 overflow-y-auto space-y-3 shadow ${isEmbed ? 'flex-1 min-h-[300px]' : 'h-[60vh]'}`}>
         {messages.map((m, i) => (
           <MessageBubble
             key={i}
