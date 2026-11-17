@@ -11,11 +11,20 @@ import ClinicSetup from './ClinicSetup'
 import AuditLogTable from './AuditLogTable'
 import ShareAndEmbed from './ShareAndEmbed'
 
+function extractErrorInfo(err) {
+  if (!err) return null
+  const status = err.response?.status || 'ERROR'
+  const code = err.response?.data?.code || (err.response?.status ? `HTTP_${err.response.status}` : 'REQUEST_FAILED')
+  const message = err.response?.data?.message || err.message || 'An unexpected error occurred'
+  return { status, code, message }
+}
+
 export default function AdminDashboard({ tenant = 'default' }) {
   const permCtx = usePermissions()
   const [appointments, setAppointments] = useState([])
   const [editing, setEditing] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)
   const [view, setView] = useState('table')
   const [calendarMode, setCalendarMode] = useState('month')
   const [currentDate, setCurrentDate] = useState(new Date())
@@ -120,9 +129,13 @@ export default function AdminDashboard({ tenant = 'default' }) {
   // Check /me and load appointments
   const loadProfileAndData = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       let profile = permCtx.user
       if (!profile) {
+        if (permCtx.error && permCtx.error.response?.status !== 401) {
+          throw permCtx.error
+        }
         const meRes = await api.get(`/t/${tenant}/me`)
         profile = meRes.data
         setLocalUserProfile(profile)
@@ -144,11 +157,33 @@ export default function AdminDashboard({ tenant = 'default' }) {
       if (e?.response?.status === 401) {
         localStorage.removeItem('token')
         router.replace(`/t/${tenant}/login`)
+        return
       }
+      setLoadError(extractErrorInfo(e))
     } finally {
       setLoading(false)
     }
-  }, [tenant, permCtx.user, router])
+  }, [tenant, permCtx.user, permCtx.error, router])
+
+  useEffect(() => {
+    if (permCtx.error && !permCtx.user && permCtx.error.response?.status !== 401) {
+      setLoadError(extractErrorInfo(permCtx.error))
+      setLoading(false)
+    }
+  }, [permCtx.error, permCtx.user])
+
+  const handleRetry = async () => {
+    setLoading(true)
+    setLoadError(null)
+    try {
+      if (permCtx.refresh) {
+        await permCtx.refresh()
+      }
+    } catch {
+      // Handled by loadProfileAndData
+    }
+    await loadProfileAndData()
+  }
 
   useEffect(() => {
     loadProfileAndData()
@@ -385,7 +420,36 @@ export default function AdminDashboard({ tenant = 'default' }) {
           </div>
         </div>
 
-        {view === 'team' ? (
+        {loadError ? (
+          <div
+            role="alert"
+            className="bg-red-50 border-2 border-red-300 rounded-2xl p-6 text-red-900 shadow-sm space-y-3 my-4"
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-2xl" aria-hidden="true">⚠️</span>
+              <h2 className="text-lg font-bold">Failed to Load Dashboard Data</h2>
+            </div>
+            <p className="text-sm text-red-800">
+              An error occurred while loading your profile or clinic appointments.
+            </p>
+            <div className="bg-white/90 p-3 rounded-lg border border-red-200 text-xs font-mono text-red-950 space-y-1">
+              <div><span className="font-semibold">Status:</span> {loadError.status}</div>
+              <div><span className="font-semibold">Code:</span> {loadError.code}</div>
+              {loadError.message && (
+                <div><span className="font-semibold">Details:</span> {loadError.message}</div>
+              )}
+            </div>
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={handleRetry}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg transition shadow-sm inline-flex items-center gap-2"
+              >
+                🔄 Retry
+              </button>
+            </div>
+          </div>
+        ) : view === 'team' ? (
           <TeamManagement tenant={tenant} />
         ) : view === 'setup' ? (
           <ClinicSetup tenant={tenant} />
