@@ -9,6 +9,7 @@ import DashboardNav from './DashboardNav'
 import TeamManagement from './TeamManagement'
 import ClinicSetup from './ClinicSetup'
 import AuditLogTable from './AuditLogTable'
+import ShareAndEmbed from './ShareAndEmbed'
 
 export default function AdminDashboard({ tenant = 'default' }) {
   const permCtx = usePermissions()
@@ -161,6 +162,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
   const canCancelAppointments = can('appointments.cancel')
   const canDeleteAppointments = can('appointments.delete')
   const canAccessSetup = can('doctors.manage') || can('reasons.manage') || can('settings.manage')
+  const canManageSettings = can('settings.manage')
 
   const filtered = useMemo(() => {
     const match = (val, q) => String(val || '').toLowerCase().includes(String(q || '').toLowerCase())
@@ -347,7 +349,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
       <div className="max-w-5xl mx-auto p-4 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {view !== 'team' && view !== 'setup' && view !== 'audit' && canCreateAppointments && (
+            {view !== 'team' && view !== 'setup' && view !== 'share' && view !== 'audit' && canCreateAppointments && (
               <button className="px-3 py-1 rounded bg-blue-600 text-white font-medium text-sm" onClick={onAddFromTable}>
                 + New Appointment
               </button>
@@ -362,6 +364,9 @@ export default function AdminDashboard({ tenant = 'default' }) {
               )}
               {canAccessSetup && (
                 <button className={`px-3 py-1 text-sm font-medium ${view === 'setup' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('setup')}>Clinic Setup</button>
+              )}
+              {canManageSettings && (
+                <button className={`px-3 py-1 text-sm font-medium ${view === 'share' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('share')}>Share &amp; Embed</button>
               )}
               {isTenantAdmin && (
                 <>
@@ -384,6 +389,8 @@ export default function AdminDashboard({ tenant = 'default' }) {
           <TeamManagement tenant={tenant} />
         ) : view === 'setup' ? (
           <ClinicSetup tenant={tenant} />
+        ) : view === 'share' ? (
+          <ShareAndEmbed tenant={tenant} />
         ) : view === 'audit' ? (
           <AuditLogTable tenant={tenant} />
         ) : (

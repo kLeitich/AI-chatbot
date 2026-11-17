@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import api from '../lib/api'
 import { usePermissions } from '../context/PermissionContext'
+import ShareAndEmbed from './ShareAndEmbed'
 
 export default function ClinicSetup({ tenant = 'default' }) {
   const { can } = usePermissions()
@@ -530,6 +531,13 @@ export default function ClinicSetup({ tenant = 'default' }) {
               Save Emergency Settings
             </button>
           </form>
+        </section>
+      )}
+
+      {/* SECTION 4: SHARE & EMBED */}
+      {canManageSettings && (
+        <section>
+          <ShareAndEmbed tenant={tenant} />
         </section>
       )}
     </div>
