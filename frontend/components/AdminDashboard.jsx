@@ -10,6 +10,7 @@ import TeamManagement from './TeamManagement'
 import ClinicSetup from './ClinicSetup'
 import AuditLogTable from './AuditLogTable'
 import ShareAndEmbed from './ShareAndEmbed'
+import AppointmentListView from './AppointmentListView'
 
 function extractErrorInfo(err) {
   if (!err) return null
@@ -29,6 +30,13 @@ export default function AdminDashboard({ tenant = 'default' }) {
   const [calendarMode, setCalendarMode] = useState('month')
   const [currentDate, setCurrentDate] = useState(new Date())
   const router = useRouter()
+
+  // Default to list view on small screens
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      setView('list')
+    }
+  }, [])
 
   // Modal helpers for doctors, availability, and conflict alternatives
   const [activeDoctors, setActiveDoctors] = useState([])
@@ -394,6 +402,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
               {canViewAppointments && (
                 <>
                   <button className={`px-3 py-1 text-sm ${view === 'table' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('table')}>Table</button>
+                  <button className={`px-3 py-1 text-sm ${view === 'list' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('list')}>List</button>
                   <button className={`px-3 py-1 text-sm ${view === 'calendar' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('calendar')}>Calendar</button>
                 </>
               )}
@@ -415,6 +424,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
               <div className="inline-flex border rounded overflow-hidden">
                 <button className={`px-3 py-1 text-sm ${calendarMode === 'month' ? 'bg-gray-900 text-white' : 'bg-white'}`} onClick={() => setCalendarMode('month')}>Month</button>
                 <button className={`px-3 py-1 text-sm ${calendarMode === 'week' ? 'bg-gray-900 text-white' : 'bg-white'}`} onClick={() => setCalendarMode('week')}>Week</button>
+                <button className={`px-3 py-1 text-sm ${calendarMode === 'day' ? 'bg-gray-900 text-white' : 'bg-white'}`} onClick={() => setCalendarMode('day')}>Day</button>
               </div>
             )}
           </div>
@@ -459,7 +469,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
           <AuditLogTable tenant={tenant} />
         ) : (
           <>
-            {view === 'table' && (
+            {(view === 'table' || view === 'list') && (
               <div className="bg-white border rounded p-3 shadow-sm space-y-2">
                 <div className="grid grid-cols-6 gap-2">
                   <input value={fPatient} onChange={(e)=>setFPatient(e.target.value)} className="border rounded p-2 text-sm" placeholder="Filter patient" />
@@ -487,6 +497,17 @@ export default function AdminDashboard({ tenant = 'default' }) {
             ) : view === 'table' ? (
               <AppointmentTable
                 appointments={filtered}
+                onEdit={canEditAppointments ? setEditing : undefined}
+                onCancel={canCancelAppointments ? onCancel : undefined}
+                onDelete={canDeleteAppointments ? onDelete : undefined}
+                canEdit={canEditAppointments}
+                canCancel={canCancelAppointments}
+                canDelete={canDeleteAppointments}
+              />
+            ) : view === 'list' ? (
+              <AppointmentListView
+                appointments={filtered}
+                rawCount={(appointments || []).length}
                 onEdit={canEditAppointments ? setEditing : undefined}
                 onCancel={canCancelAppointments ? onCancel : undefined}
                 onDelete={canDeleteAppointments ? onDelete : undefined}
