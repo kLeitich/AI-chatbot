@@ -94,6 +94,42 @@ function MessageBubble({ role, text, emergency, emergencyNumber }) {
   )
 }
 
+const memoryStorage = {}
+
+export function safeGetStorage(key) {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return localStorage.getItem(key)
+    }
+  } catch {
+    // In-memory fallback if storage access restricted (e.g. third-party iframe)
+  }
+  return memoryStorage[key] || null
+}
+
+export function safeSetStorage(key, val) {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem(key, val)
+      return
+    }
+  } catch {
+    // In-memory fallback
+  }
+  memoryStorage[key] = String(val)
+}
+
+export function safeRemoveStorage(key) {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.removeItem(key)
+    }
+  } catch {
+    // In-memory fallback
+  }
+  delete memoryStorage[key]
+}
+
 export default function Chatbot({
   tenant = 'default',
   publicConfig = null,
@@ -113,11 +149,10 @@ export default function Chatbot({
   const [sessionId, setSessionId] = useState('')
   const bottomRef = useRef(null)
 
-  // Initialize sessionId from localStorage if previously established
+  // Initialize sessionId from safe storage if previously established
   useEffect(() => {
-    if (typeof window === 'undefined') return
     const k = 'chat_session_id_' + tenant
-    const v = localStorage.getItem(k)
+    const v = safeGetStorage(k)
     if (v) setSessionId(v)
   }, [tenant])
 
@@ -129,9 +164,7 @@ export default function Chatbot({
     setMessages([initialGreeting])
     setInput('')
     setSessionId('')
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('chat_session_id_' + tenant)
-    }
+    safeRemoveStorage('chat_session_id_' + tenant)
   }
 
   const send = async () => {
@@ -170,9 +203,7 @@ export default function Chatbot({
       const { message, reply, appointment, session_id, emergency, emergency_category, emergency_number } = res.data || {}
       if (session_id) {
         setSessionId(session_id)
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('chat_session_id_' + tenant, session_id)
-        }
+        safeSetStorage('chat_session_id_' + tenant, session_id)
       }
       const aiText = reply || message || "Hmm, I didn’t catch that."
       const isEmergency = Boolean(emergency)
