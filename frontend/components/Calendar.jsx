@@ -65,7 +65,7 @@ export default function Calendar({
   const minuteOfDay=now.getHours()*60+now.getMinutes(); const nowTopPx=(minuteOfDay/(24*60))*(HOURS.length*SLOT_PX)
   useEffect(()=>{
     if(view!=='week' && view!=='day') return;
-    if(scrollRef.current){
+    if(scrollRef.current && typeof scrollRef.current.scrollTo === 'function'){
       const target=Math.max(0,nowTopPx-200);
       scrollRef.current.scrollTo({top:target,behavior:'smooth'})
     }

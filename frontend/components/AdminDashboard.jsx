@@ -142,9 +142,6 @@ export default function AdminDashboard({ tenant = 'default' }) {
     try {
       let profile = permCtx.user
       if (!profile) {
-        if (permCtx.error && permCtx.error.response?.status !== 401) {
-          throw permCtx.error
-        }
         const meRes = await api.get(`/t/${tenant}/me`)
         profile = meRes.data
         setLocalUserProfile(profile)
@@ -172,7 +169,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
     } finally {
       setLoading(false)
     }
-  }, [tenant, permCtx.user, permCtx.error, router])
+  }, [tenant, permCtx.user, router])
 
   useEffect(() => {
     if (permCtx.error && !permCtx.user && permCtx.error.response?.status !== 401) {
@@ -188,10 +185,30 @@ export default function AdminDashboard({ tenant = 'default' }) {
       if (permCtx.refresh) {
         await permCtx.refresh()
       }
-    } catch {
-      // Handled by loadProfileAndData
+      const meRes = await api.get(`/t/${tenant}/me`)
+      const profile = meRes.data
+      setLocalUserProfile(profile)
+      if (profile.must_change_password) {
+        setForcePasswordChange(true)
+      }
+      const canView = profile.role === 'tenant_admin' || (profile.permissions || []).includes('appointments.view')
+      if (canView) {
+        const res = await api.get(`/t/${tenant}/admin/appointments`)
+        setAppointments(res.data || [])
+      } else {
+        setAppointments([])
+      }
+      setLoadError(null)
+    } catch (e) {
+      if (e?.response?.status === 401) {
+        localStorage.removeItem('token')
+        router.replace(`/t/${tenant}/login`)
+        return
+      }
+      setLoadError(extractErrorInfo(e))
+    } finally {
+      setLoading(false)
     }
-    await loadProfileAndData()
   }
 
   useEffect(() => {
