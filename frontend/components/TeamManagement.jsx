@@ -202,8 +202,8 @@ export default function TeamManagement({ tenant }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-slate-900">Clinic Team & Permissions</h2>
-          <p className="text-sm text-slate-500">Manage clinic staff, presets, and access privileges.</p>
+          <h2 className="text-xl font-semibold text-slate-900">Team & Access</h2>
+          <p className="text-sm text-slate-500">Add users and control what each person can do</p>
         </div>
         <button
           onClick={() => setShowAddModal(true)}

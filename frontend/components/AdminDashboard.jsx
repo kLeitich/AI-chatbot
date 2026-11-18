@@ -11,6 +11,7 @@ import ClinicSetup from './ClinicSetup'
 import AuditLogTable from './AuditLogTable'
 import ShareAndEmbed from './ShareAndEmbed'
 import AppointmentListView from './AppointmentListView'
+import DoctorManagement from './DoctorManagement'
 
 function extractErrorInfo(err) {
   if (!err) return null
@@ -204,8 +205,10 @@ export default function AdminDashboard({ tenant = 'default' }) {
   const canEditAppointments = can('appointments.edit')
   const canCancelAppointments = can('appointments.cancel')
   const canDeleteAppointments = can('appointments.delete')
-  const canAccessSetup = can('doctors.manage') || can('reasons.manage') || can('settings.manage')
+  const canAccessDoctors = can('doctors.view') || can('doctors.manage')
+  const canAccessSetup = can('reasons.manage') || can('settings.manage')
   const canManageSettings = can('settings.manage')
+  const canAccessAudit = isTenantAdmin
 
   const filtered = useMemo(() => {
     const match = (val, q) => String(val || '').toLowerCase().includes(String(q || '').toLowerCase())
@@ -392,30 +395,134 @@ export default function AdminDashboard({ tenant = 'default' }) {
       <div className="max-w-5xl mx-auto p-4 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {view !== 'team' && view !== 'setup' && view !== 'share' && view !== 'audit' && canCreateAppointments && (
+            {view !== 'team' && view !== 'setup' && view !== 'share' && view !== 'audit' && view !== 'doctors' && canCreateAppointments && (
               <button className="px-3 py-1 rounded bg-blue-600 text-white font-medium text-sm" onClick={onAddFromTable}>
                 + New Appointment
               </button>
             )}
 
             <div className="inline-flex border rounded overflow-hidden shadow-sm">
-              {canViewAppointments && (
+              {canViewAppointments ? (
                 <>
                   <button className={`px-3 py-1 text-sm ${view === 'table' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('table')}>Table</button>
                   <button className={`px-3 py-1 text-sm ${view === 'list' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('list')}>List</button>
                   <button className={`px-3 py-1 text-sm ${view === 'calendar' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('calendar')}>Calendar</button>
                 </>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  title="Requires appointments.view permission"
+                  aria-label="Appointments (Locked - Requires appointments.view permission)"
+                  data-testid="tab-appointments-locked"
+                  className="px-3 py-1 text-sm font-medium bg-slate-100 text-slate-400 cursor-not-allowed inline-flex items-center gap-1 opacity-75"
+                >
+                  Appointments 🔒
+                </button>
               )}
-              {canAccessSetup && (
-                <button className={`px-3 py-1 text-sm font-medium ${view === 'setup' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('setup')}>Clinic Setup</button>
+
+              {canAccessDoctors ? (
+                <button
+                  type="button"
+                  className={`px-3 py-1 text-sm font-medium ${view === 'doctors' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`}
+                  onClick={() => setView('doctors')}
+                >
+                  Doctors
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  title="Requires doctors.view permission"
+                  aria-label="Doctors (Locked - Requires doctors.view permission)"
+                  data-testid="tab-doctors-locked"
+                  className="px-3 py-1 text-sm font-medium bg-slate-100 text-slate-400 cursor-not-allowed inline-flex items-center gap-1 opacity-75"
+                >
+                  Doctors 🔒
+                </button>
               )}
-              {canManageSettings && (
-                <button className={`px-3 py-1 text-sm font-medium ${view === 'share' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('share')}>Share &amp; Embed</button>
+
+              {canAccessSetup ? (
+                <button
+                  type="button"
+                  className={`px-3 py-1 text-sm font-medium ${view === 'setup' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`}
+                  onClick={() => setView('setup')}
+                >
+                  Clinic Setup
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  title="Requires reasons.manage or settings.manage permission"
+                  aria-label="Clinic Setup (Locked - Requires reasons.manage or settings.manage permission)"
+                  data-testid="tab-setup-locked"
+                  className="px-3 py-1 text-sm font-medium bg-slate-100 text-slate-400 cursor-not-allowed inline-flex items-center gap-1 opacity-75"
+                >
+                  Clinic Setup 🔒
+                </button>
               )}
-              {isTenantAdmin && (
+
+              {canManageSettings ? (
+                <button
+                  type="button"
+                  className={`px-3 py-1 text-sm font-medium ${view === 'share' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`}
+                  onClick={() => setView('share')}
+                >
+                  Share &amp; Embed
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  title="Requires settings.manage permission"
+                  aria-label="Share & Embed (Locked - Requires settings.manage permission)"
+                  data-testid="tab-share-locked"
+                  className="px-3 py-1 text-sm font-medium bg-slate-100 text-slate-400 cursor-not-allowed inline-flex items-center gap-1 opacity-75"
+                >
+                  Share &amp; Embed 🔒
+                </button>
+              )}
+
+              {isTenantAdmin ? (
                 <>
-                  <button className={`px-3 py-1 text-sm font-medium ${view === 'team' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('team')}>Team</button>
-                  <button className={`px-3 py-1 text-sm font-medium ${view === 'audit' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('audit')}>Audit</button>
+                  <button
+                    type="button"
+                    className={`px-3 py-1 text-sm font-medium ${view === 'team' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`}
+                    onClick={() => setView('team')}
+                  >
+                    <span>Team</span> &amp; Access
+                  </button>
+                  <button
+                    type="button"
+                    className={`px-3 py-1 text-sm font-medium ${view === 'audit' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`}
+                    onClick={() => setView('audit')}
+                  >
+                    Audit
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled
+                    title="Requires clinic administrator access"
+                    aria-label="Team & Access (Locked - Requires clinic administrator access)"
+                    data-testid="tab-team-locked"
+                    className="px-3 py-1 text-sm font-medium bg-slate-100 text-slate-400 cursor-not-allowed inline-flex items-center gap-1 opacity-75"
+                  >
+                    Team &amp; Access 🔒
+                  </button>
+                  <button
+                    type="button"
+                    disabled
+                    title="Requires clinic administrator access"
+                    aria-label="Audit (Locked - Requires clinic administrator access)"
+                    data-testid="tab-audit-locked"
+                    className="px-3 py-1 text-sm font-medium bg-slate-100 text-slate-400 cursor-not-allowed inline-flex items-center gap-1 opacity-75"
+                  >
+                    Audit 🔒
+                  </button>
                 </>
               )}
             </div>
@@ -459,10 +566,12 @@ export default function AdminDashboard({ tenant = 'default' }) {
               </button>
             </div>
           </div>
+        ) : view === 'doctors' ? (
+          <DoctorManagement tenant={tenant} />
         ) : view === 'team' ? (
           <TeamManagement tenant={tenant} />
         ) : view === 'setup' ? (
-          <ClinicSetup tenant={tenant} />
+          <ClinicSetup tenant={tenant} includeDoctors={false} />
         ) : view === 'share' ? (
           <ShareAndEmbed tenant={tenant} />
         ) : view === 'audit' ? (
