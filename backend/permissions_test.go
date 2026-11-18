@@ -451,7 +451,7 @@ func TestTenantSettingsPermissionsAndValidation(t *testing.T) {
 		t.Fatalf("Expected 200 on valid settings patch, err: %v, status: %d", err, respValid.StatusCode)
 	}
 
-	var res TenantSettings
+	var res TenantSettingsResponse
 	json.NewDecoder(respValid.Body).Decode(&res)
 	if res.EmergencyNumber != "+254 700 000000" {
 		t.Errorf("Expected emergency_number='+254 700 000000', got %s", res.EmergencyNumber)
@@ -464,6 +464,31 @@ func TestTenantSettingsPermissionsAndValidation(t *testing.T) {
 	}
 	if audit.TenantID != tenantID {
 		t.Errorf("Expected audit tenantID=%d, got %d", tenantID, audit.TenantID)
+	}
+
+	// 6. Tenant slug is strictly immutable (no edit path): unknown field returns 400 VALIDATION_ERROR
+	slugEditBody := map[string]string{
+		"slug": "attempted-new-slug",
+	}
+	bSlug, _ := json.Marshal(slugEditBody)
+	reqSlug := httptest.NewRequest("PATCH", fmt.Sprintf("/t/%s/admin/settings", tenantSlug), bytes.NewReader(bSlug))
+	reqSlug.Header.Set("Content-Type", "application/json")
+	reqSlug.Header.Set("Authorization", "Bearer "+adminTok)
+	respSlug, _ := app.Test(reqSlug, 10000)
+	if respSlug.StatusCode != http.StatusBadRequest {
+		t.Fatalf("Expected 400 when attempting to modify tenant slug, got %d", respSlug.StatusCode)
+	}
+	var errSlug map[string]interface{}
+	json.NewDecoder(respSlug.Body).Decode(&errSlug)
+	if errSlug["code"] != ErrCodeValidationError {
+		t.Errorf("Expected code=%s for slug modification attempt, got %v", ErrCodeValidationError, errSlug["code"])
+	}
+
+	// Verify tenant slug in DB remains unchanged
+	var checkTenant Tenant
+	db.First(&checkTenant, tenantID)
+	if checkTenant.Slug != tenantSlug {
+		t.Fatalf("Tenant slug must be immutable! Expected %s, got %s", tenantSlug, checkTenant.Slug)
 	}
 }
 

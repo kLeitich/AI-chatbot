@@ -2,8 +2,9 @@
 import { useEffect, useState, useCallback } from 'react'
 import api from '../lib/api'
 import { usePermissions } from '../context/PermissionContext'
+import ShareAndEmbed from './ShareAndEmbed'
 
-export default function ClinicSetup({ tenant = 'default' }) {
+export default function ClinicSetup({ tenant = 'default', includeDoctors = true }) {
   const { can } = usePermissions()
 
   const canManageDoctors = can('doctors.manage')
@@ -41,7 +42,7 @@ export default function ClinicSetup({ tenant = 'default' }) {
 
   // --- Fetchers ---
   const fetchDoctors = useCallback(async () => {
-    if (!canManageDoctors) return
+    if (!includeDoctors || !canManageDoctors) return
     setLoadingDoctors(true)
     try {
       const res = await api.get(`/t/${tenant}/admin/doctors`)
@@ -51,7 +52,7 @@ export default function ClinicSetup({ tenant = 'default' }) {
     } finally {
       setLoadingDoctors(false)
     }
-  }, [tenant, canManageDoctors])
+  }, [tenant, canManageDoctors, includeDoctors])
 
   const fetchReasons = useCallback(async () => {
     if (!canManageReasons) return
@@ -201,7 +202,7 @@ export default function ClinicSetup({ tenant = 'default' }) {
   return (
     <div className="space-y-8">
       {/* SECTION 1: DOCTORS */}
-      {canManageDoctors && (
+      {includeDoctors && canManageDoctors && (
         <section className="bg-white border rounded-xl p-5 shadow-sm space-y-4">
           <div className="flex items-center justify-between border-b pb-3">
             <div>
@@ -530,6 +531,13 @@ export default function ClinicSetup({ tenant = 'default' }) {
               Save Emergency Settings
             </button>
           </form>
+        </section>
+      )}
+
+      {/* SECTION 4: SHARE & EMBED */}
+      {canManageSettings && (
+        <section>
+          <ShareAndEmbed tenant={tenant} />
         </section>
       )}
     </div>

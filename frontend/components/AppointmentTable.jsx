@@ -29,6 +29,7 @@ export default function AppointmentTable({
             <Th>Date</Th>
             <Th>Time</Th>
             <Th>Reason</Th>
+            <Th>Source</Th>
             <Th>Status</Th>
             {hasActions && <Th>Actions</Th>}
           </tr>
@@ -36,7 +37,7 @@ export default function AppointmentTable({
         <tbody>
           {appointments.length === 0 ? (
             <tr>
-              <td colSpan={hasActions ? 8 : 7} className="p-4 text-center text-gray-500">
+              <td colSpan={hasActions ? 9 : 8} className="p-4 text-center text-gray-500">
                 No appointments found.
               </td>
             </tr>
@@ -49,6 +50,15 @@ export default function AppointmentTable({
                 <Td>{a.date}</Td>
                 <Td>{a.time}</Td>
                 <Td>{a.reason}</Td>
+                <Td>
+                  {a.source ? (
+                    <span className="font-mono text-xs text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">
+                      {a.source}
+                    </span>
+                  ) : (
+                    <span className="text-gray-400">-</span>
+                  )}
+                </Td>
                 <Td>
                   <span className={`px-2 py-0.5 rounded text-xs font-semibold uppercase tracking-wider ${
                     statusStyles[a.status] || 'bg-gray-100 text-gray-800'

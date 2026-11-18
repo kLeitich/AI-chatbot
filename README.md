@@ -89,6 +89,50 @@ Local URLs:
 - Admin login (default tenant): `http://localhost:3000/t/default/login`
 - Admin dashboard (default tenant): `http://localhost:3000/t/default/admin/dashboard`
 
+## Share your booking link
+
+Clinics can share their appointment booking assistant directly with patients or embed it into their existing website using three integration options:
+
+### 1. Direct Booking Page
+Send your patients directly to your dedicated full-page booking link:
+```text
+https://your-domain.com/book/<clinic-slug>
+```
+You can also append URL parameters to pre-fill context or track marketing attribution:
+- Pre-select a doctor: `https://your-domain.com/book/<clinic-slug>?doctor=2`
+- Pre-select a reason: `https://your-domain.com/book/<clinic-slug>?reason=1`
+- Track campaign source: `https://your-domain.com/book/<clinic-slug>?source=instagram`
+
+### 2. Website Iframe Embed
+Embed a responsive, chrome-less booking container inside any webpage on your clinic's site:
+```html
+<iframe
+  src="https://your-domain.com/embed/<clinic-slug>"
+  title="Clinic Appointment Booking"
+  width="100%"
+  height="640"
+  loading="lazy"
+  style="border:none; border-radius:12px;">
+</iframe>
+```
+
+### 3. Floating Popup Widget
+Add an accessible floating chat widget button to your site by including `embed.js` before your closing `</body>` tag:
+```html
+<script
+  src="https://your-domain.com/embed.js"
+  data-clinic="<clinic-slug>"
+  data-position="right"
+  data-color="#2563eb">
+</script>
+```
+
+### Domain Allowlist Requirement (Security Note)
+> **Important:** To protect patient privacy and prevent clickjacking, embedded routes (`/embed/<clinic-slug>`) enforce strict Content Security Policy (`frame-ancestors`).
+> Before embedding the booking page or floating widget on your website, a clinic administrator must add your website domain (e.g., `https://myclinic.com` or `https://*.myclinic.com`) to the **Allowed Embed Domains** list in the Admin Dashboard (**Clinic Setup** / **Share & Embed**).
+> If no domains are configured, iframe embedding is blocked (`frame-ancestors 'none'`) by default, while your direct booking link (`/book/<clinic-slug>`) continues to function normally.
+
+
 ## Docker Deployment
 ```bash
 docker-compose up --build

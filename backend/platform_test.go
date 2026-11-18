@@ -110,9 +110,9 @@ func TestPlatformViewAppointmentsWithFilters(t *testing.T) {
 	db.Create(&doc1)
 	db.Create(&doc2)
 
-	db.Create(&Appointment{TenantID: t1.ID, DoctorID: &doc1.ID, Doctor: doc1.Name, PatientName: "Alice", Date: "2026-11-15", Time: "09:00", Status: StatusConfirmed})
-	db.Create(&Appointment{TenantID: t1.ID, DoctorID: &doc1.ID, Doctor: doc1.Name, PatientName: "Bob", Date: "2026-11-20", Time: "10:00", Status: StatusCancelled})
-	db.Create(&Appointment{TenantID: t2.ID, DoctorID: &doc2.ID, Doctor: doc2.Name, PatientName: "Charlie", Date: "2026-11-25", Time: "11:00", Status: StatusConfirmed})
+	db.Create(&Appointment{TenantID: t1.ID, DoctorID: &doc1.ID, Doctor: doc1.Name, PatientName: "Alice", Date: "2029-11-15", Time: "09:00", Status: StatusConfirmed})
+	db.Create(&Appointment{TenantID: t1.ID, DoctorID: &doc1.ID, Doctor: doc1.Name, PatientName: "Bob", Date: "2029-11-20", Time: "10:00", Status: StatusCancelled})
+	db.Create(&Appointment{TenantID: t2.ID, DoctorID: &doc2.ID, Doctor: doc2.Name, PatientName: "Charlie", Date: "2029-11-25", Time: "11:00", Status: StatusConfirmed})
 
 	// 1. Filter by tenant_id
 	urlTenant := fmt.Sprintf("/platform/appointments?tenant_id=%d", t1.ID)
@@ -139,7 +139,7 @@ func TestPlatformViewAppointmentsWithFilters(t *testing.T) {
 	}
 
 	// 3. Filter by date range across clinics
-	req3 := httptest.NewRequest("GET", "/platform/appointments?start_date=2026-11-18&end_date=2026-11-22", nil)
+	req3 := httptest.NewRequest("GET", "/platform/appointments?start_date=2029-11-18&end_date=2029-11-22", nil)
 	req3.Header.Set("Authorization", "Bearer "+platTok)
 	resp3, _ := app.Test(req3, 10000)
 	var res3 PaginatedAppointmentsResponse

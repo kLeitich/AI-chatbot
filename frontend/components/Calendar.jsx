@@ -9,6 +9,7 @@ function addWeeks(date, n) { return addDays(date, n * 7) }
 function ymd(d) { const year=d.getFullYear(); const month=String(d.getMonth()+1).padStart(2,'0'); const day=String(d.getDate()).padStart(2,'0'); return `${year}-${month}-${day}` }
 function monthLabel(date) { return date.toLocaleString(undefined, { month: 'long', year: 'numeric' }) }
 function weekLabel(date) { const s=startOfWeek(date); const e=addDays(s,6); const fmt=(x)=>x.toLocaleDateString(undefined,{month:'short',day:'numeric'}); return `${fmt(s)} - ${fmt(e)}` }
+function dayLabel(date) { return date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) }
 
 const HOURS = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`)
 const SLOT_PX = 48
@@ -45,18 +46,36 @@ export default function Calendar({
   const gridDays=useMemo(()=>{ const days=[]; for(let i=0;i<numCells;i++) days.push(addDays(gridStart,i)); return days },[gridStart,numCells])
   const apByDate=useMemo(()=>{ const map={}; for(const ap of appointments){ const key=ap.date; if(!map[key]) map[key]=[]; map[key].push(ap)} return map },[appointments])
 
+  const distinctDoctors = useMemo(() => {
+    const set = new Set()
+    for (const ap of appointments) {
+      if (ap.doctor && ap.doctor.trim()) {
+        set.add(ap.doctor.trim())
+      }
+    }
+    const arr = Array.from(set).sort()
+    return arr.length > 0 ? arr : ['All Doctors']
+  }, [appointments])
+
   const isSameMonth=(d)=>d.getMonth()===date.getMonth()
-  const headerLabel=view==='month'?monthLabel(date):weekLabel(date)
-  const goPrev=()=>onChangeDate&&onChangeDate(view==='month'?addMonths(date,-1):addWeeks(date,-1))
-  const goNext=()=>onChangeDate&&onChangeDate(view==='month'?addMonths(date,1):addWeeks(date,1))
+  const headerLabel=view==='month'?monthLabel(date):view==='day'?dayLabel(date):weekLabel(date)
+  const goPrev=()=>onChangeDate&&onChangeDate(view==='month'?addMonths(date,-1):view==='day'?addDays(date,-1):addWeeks(date,-1))
+  const goNext=()=>onChangeDate&&onChangeDate(view==='month'?addMonths(date,1):view==='day'?addDays(date,1):addWeeks(date,1))
 
   const minuteOfDay=now.getHours()*60+now.getMinutes(); const nowTopPx=(minuteOfDay/(24*60))*(HOURS.length*SLOT_PX)
-  useEffect(()=>{ if(view!=='week') return; const start=new Date(gridStart); const end=addDays(start,7); if(now>=start&&now<end&&scrollRef.current){ const target=Math.max(0,nowTopPx-200); scrollRef.current.scrollTo({top:target,behavior:'smooth'}) } },[view,gridStart,nowTopPx,now])
+  useEffect(()=>{
+    if(view!=='week' && view!=='day') return;
+    if(scrollRef.current && typeof scrollRef.current.scrollTo === 'function'){
+      const target=Math.max(0,nowTopPx-200);
+      scrollRef.current.scrollTo({top:target,behavior:'smooth'})
+    }
+  },[view,nowTopPx])
 
   const canClickCell = Boolean(onAdd && canCreate)
+  const currentDayKey = ymd(date)
 
   return (
-    <div className="border rounded bg-white text-gray-900 shadow">
+    <div className="border rounded bg-white text-gray-900 shadow" data-testid="calendar-view">
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
         <div className="inline-flex gap-2">
           <button className="px-2 py-1 border rounded border-gray-200 hover:bg-gray-50" onClick={goPrev}>←</button>
@@ -112,7 +131,109 @@ export default function Calendar({
             })}
           </div>
         </>
+      ) : view==='day' ? (
+        /* DAY MODE: Hourly slots per doctor */
+        <div data-testid="calendar-day-mode">
+          <div
+            className="grid border-b border-gray-200 bg-gray-100"
+            style={{ gridTemplateColumns: `100px repeat(${distinctDoctors.length}, minmax(180px, 1fr))` }}
+          >
+            <div className="p-2.5 text-xs font-semibold text-gray-700 border-r border-gray-200">Time</div>
+            {distinctDoctors.map((doc) => (
+              <div key={doc} className="p-2.5 text-xs font-bold text-gray-900 border-r border-gray-200 truncate">
+                👨‍⚕️ {doc}
+              </div>
+            ))}
+          </div>
+
+          <div className="relative max-h-[70vh] overflow-y-auto" ref={scrollRef}>
+            {ymd(now) === currentDayKey && (
+              <div className="absolute left-[100px] right-0 z-10" style={{ top: nowTopPx }}>
+                <div className="h-px bg-red-500 shadow-sm" />
+              </div>
+            )}
+            <div
+              className="grid"
+              style={{ gridTemplateColumns: `100px repeat(${distinctDoctors.length}, minmax(180px, 1fr))` }}
+            >
+              {HOURS.map((h) => (
+                <div key={`day-row-${h}`} className="contents">
+                  <div className="border-r border-b p-2 text-xs h-14 leading-[44px] text-gray-500 border-gray-200 bg-gray-50/50">
+                    {h}
+                  </div>
+                  {distinctDoctors.map((doc) => {
+                    const items = (apByDate[currentDayKey] || []).filter((ap) => {
+                      const matchDoctor = distinctDoctors.length === 1 && distinctDoctors[0] === 'All Doctors'
+                        ? true
+                        : ap.doctor === doc
+                      return matchDoctor && ap.time?.startsWith(h.slice(0, 2))
+                    })
+
+                    const onCellClick = (e) => {
+                      if (!canClickCell) return
+                      const rect = e.currentTarget.getBoundingClientRect()
+                      const y = e.clientY - rect.top
+                      const minute = y < rect.height / 2 ? '00' : '30'
+                      const hh = h.slice(0, 2)
+                      onAdd({
+                        date: currentDayKey,
+                        time: `${hh}:${minute}`,
+                        patient_name: '',
+                        doctor: doc === 'All Doctors' ? '' : doc,
+                        reason: '',
+                        status: 'pending',
+                      })
+                    }
+
+                    return (
+                      <div
+                        key={`${currentDayKey}-${h}-${doc}`}
+                        className={`border-r border-b min-h-14 p-1.5 border-gray-200 ${canClickCell ? 'cursor-crosshair hover:bg-gray-50/80' : 'cursor-default'}`}
+                        onClick={canClickCell ? onCellClick : undefined}
+                      >
+                        <div className="flex flex-col gap-1 pointer-events-none">
+                          {items.map((ap) => {
+                            const showEdit = Boolean(onEdit && canEdit)
+                            const showCancel = Boolean(onCancel && canCancel && ap.status !== 'cancelled')
+                            const showDelete = Boolean(onDelete && canDelete)
+                            const hasItemActions = showEdit || showCancel || showDelete
+
+                            return (
+                              <div
+                                key={ap.id ?? `${ap.date}-${ap.time}-${ap.patient_name}`}
+                                className={`text-xs ${colorFor(ap)} text-white/95 rounded-lg px-2.5 py-1.5 shadow-sm flex items-center justify-between`}
+                              >
+                                <div className="truncate">
+                                  <span className="font-bold">{ap.time}</span> • {ap.patient_name}
+                                  {ap.reason && <span className="text-[11px] opacity-90 block">{ap.reason}</span>}
+                                </div>
+                                {hasItemActions && (
+                                  <div className="flex gap-1 ml-2 flex-shrink-0">
+                                    {showEdit && (
+                                      <button className="pointer-events-auto opacity-90 hover:opacity-100" title="Edit" onClick={(ev)=>{ev.stopPropagation(); onEdit(ap)}}>✏️</button>
+                                    )}
+                                    {showCancel && (
+                                      <button className="pointer-events-auto opacity-90 hover:opacity-100 text-xs" title="Cancel" onClick={(ev)=>{ev.stopPropagation(); onCancel(ap)}}>❌</button>
+                                    )}
+                                    {showDelete && (
+                                      <button className="pointer-events-auto opacity-90 hover:opacity-100" title="Delete" onClick={(ev)=>{ev.stopPropagation(); onDelete(ap)}}>🗑️</button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       ) : (
+        /* WEEK MODE */
         <div className="">
           <div className="grid" style={{gridTemplateColumns:'100px repeat(7, 1fr)'}}>
             <div className="p-2 text-xs font-medium bg-gray-100 border-b border-gray-200">Time</div>
@@ -129,7 +250,7 @@ export default function Calendar({
                   {Array.from({length:7}).map((_,dayIdx)=>{
                     const day=addDays(gridStart,dayIdx)
                     const key=ymd(day)
-                    const items=(apByDate[key]||[]).filter((ap)=>ap.time?.startsWith(h))
+                    const items=(apByDate[key]||[]).filter((ap)=>ap.time?.startsWith(h.slice(0,2)))
                     const onCellClick=(e)=>{
                       if(!canClickCell) return
                       const rect=e.currentTarget.getBoundingClientRect()

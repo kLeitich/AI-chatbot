@@ -15,7 +15,47 @@ function Toast({ text, onClose }) {
 }
 
 function EmergencyCard({ text, emergencyNumber }) {
-  const primaryNumber = emergencyNumber && emergencyNumber.trim() ? emergencyNumber.trim() : '999'
+  const rawClinic = emergencyNumber && emergencyNumber.trim() ? emergencyNumber.trim() : ''
+  const cleanClinic = rawClinic.replace(/[\s-]/g, '')
+
+  const buttons = []
+  if (
+    cleanClinic &&
+    cleanClinic !== '999' &&
+    cleanClinic !== '112' &&
+    cleanClinic !== '+999' &&
+    cleanClinic !== '+112'
+  ) {
+    buttons.push({
+      href: `tel:${cleanClinic}`,
+      label: `📞 Call Clinic (${rawClinic})`,
+      className:
+        'inline-flex items-center gap-2 px-4 py-2 bg-white text-red-800 font-bold rounded-lg shadow hover:bg-red-50 text-sm focus:outline-none focus:ring-2 focus:ring-white transition',
+    })
+  }
+
+  buttons.push({
+    href: 'tel:999',
+    label: '📞 Call 999',
+    className:
+      'inline-flex items-center gap-2 px-4 py-2 bg-white text-red-800 font-bold rounded-lg shadow hover:bg-red-50 text-sm focus:outline-none focus:ring-2 focus:ring-white transition',
+  })
+
+  buttons.push({
+    href: 'tel:112',
+    label: '📞 Call 112',
+    className:
+      'inline-flex items-center gap-2 px-4 py-2 bg-red-900 text-white font-bold rounded-lg shadow hover:bg-red-950 text-sm border border-red-600 focus:outline-none focus:ring-2 focus:ring-white transition',
+  })
+
+  // Deduplicate by href
+  const seen = new Set()
+  const dedupedButtons = buttons.filter((b) => {
+    if (seen.has(b.href)) return false
+    seen.add(b.href)
+    return true
+  })
+
   return (
     <div className="w-full bg-red-700 text-white p-4 rounded-xl border-2 border-red-900 shadow-lg space-y-3" role="alert">
       <div className="flex items-center gap-2">
@@ -24,26 +64,11 @@ function EmergencyCard({ text, emergencyNumber }) {
       </div>
       <p className="text-sm text-red-50 font-medium whitespace-pre-line leading-relaxed">{text}</p>
       <div className="pt-2 border-t border-red-600/60 flex flex-wrap gap-2">
-        {primaryNumber !== '999' && primaryNumber !== '112' && (
-          <a
-            href={`tel:${primaryNumber}`}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-white text-red-800 font-bold rounded-lg shadow hover:bg-red-50 text-sm focus:outline-none focus:ring-2 focus:ring-white transition"
-          >
-            📞 Call Clinic ({primaryNumber})
+        {dedupedButtons.map((btn) => (
+          <a key={btn.href} href={btn.href} className={btn.className}>
+            {btn.label}
           </a>
-        )}
-        <a
-          href="tel:999"
-          className="inline-flex items-center gap-2 px-4 py-2 bg-white text-red-800 font-bold rounded-lg shadow hover:bg-red-50 text-sm focus:outline-none focus:ring-2 focus:ring-white transition"
-        >
-          📞 Call 999
-        </a>
-        <a
-          href="tel:112"
-          className="inline-flex items-center gap-2 px-4 py-2 bg-red-900 text-white font-bold rounded-lg shadow hover:bg-red-950 text-sm border border-red-600 focus:outline-none focus:ring-2 focus:ring-white transition"
-        >
-          📞 Call 112
-        </a>
+        ))}
       </div>
     </div>
   )
@@ -69,8 +94,54 @@ function MessageBubble({ role, text, emergency, emergencyNumber }) {
   )
 }
 
-export default function Chatbot({ tenant = 'default' }) {
-  const initialGreeting = { role: 'ai', text: 'Hi! I can book a doctor appointment. Tell me details.' }
+const memoryStorage = {}
+
+export function safeGetStorage(key) {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return localStorage.getItem(key)
+    }
+  } catch {
+    // In-memory fallback if storage access restricted (e.g. third-party iframe)
+  }
+  return memoryStorage[key] || null
+}
+
+export function safeSetStorage(key, val) {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem(key, val)
+      return
+    }
+  } catch {
+    // In-memory fallback
+  }
+  memoryStorage[key] = String(val)
+}
+
+export function safeRemoveStorage(key) {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.removeItem(key)
+    }
+  } catch {
+    // In-memory fallback
+  }
+  delete memoryStorage[key]
+}
+
+export default function Chatbot({
+  tenant = 'default',
+  publicConfig = null,
+  initialContext = null,
+  isEmbed = false,
+}) {
+  const clinicName = publicConfig?.name || 'our clinic'
+  const privacyUrl = publicConfig?.privacy_url
+  const greetingText = publicConfig?.name
+    ? `Hi! Welcome to ${publicConfig.name}. I can book a doctor appointment for you. Tell me your details.`
+    : 'Hi! I can book a doctor appointment. Tell me details.'
+  const initialGreeting = { role: 'ai', text: greetingText }
   const [messages, setMessages] = useState([initialGreeting])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -78,11 +149,10 @@ export default function Chatbot({ tenant = 'default' }) {
   const [sessionId, setSessionId] = useState('')
   const bottomRef = useRef(null)
 
-  // Initialize sessionId from localStorage if previously established
+  // Initialize sessionId from safe storage if previously established
   useEffect(() => {
-    if (typeof window === 'undefined') return
     const k = 'chat_session_id_' + tenant
-    const v = localStorage.getItem(k)
+    const v = safeGetStorage(k)
     if (v) setSessionId(v)
   }, [tenant])
 
@@ -94,33 +164,49 @@ export default function Chatbot({ tenant = 'default' }) {
     setMessages([initialGreeting])
     setInput('')
     setSessionId('')
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('chat_session_id_' + tenant)
-    }
-  }
-
-  const isEmergencyReply = (txt) => {
-    if (!txt) return false
-    return /\b(999|112|emergency|immediately|urgent medical)\b/i.test(txt)
+    safeRemoveStorage('chat_session_id_' + tenant)
   }
 
   const send = async () => {
-    if (!input.trim()) return
     const userText = input.trim()
+    if (!userText || loading) return
     setMessages((prev) => [...prev, { role: 'user', text: userText }])
     setInput('')
     setLoading(true)
     try {
       const payload = { message: userText }
       if (sessionId) payload.session_id = sessionId
+
+      // Pass context on the first user message only
+      const userMessageCount = messages.filter((m) => m.role === 'user').length
+      if (userMessageCount === 0 && initialContext) {
+        const ctx = {}
+        const rawDoc = initialContext.doctor_id ?? initialContext.doctor
+        if (rawDoc !== undefined && rawDoc !== null && rawDoc !== '') {
+          const docId = Number(rawDoc)
+          if (!isNaN(docId) && docId > 0) ctx.doctor_id = docId
+        }
+        const rawReason = initialContext.reason_id ?? initialContext.reason
+        if (rawReason !== undefined && rawReason !== null && rawReason !== '') {
+          const rId = Number(rawReason)
+          if (!isNaN(rId) && rId > 0) ctx.reason_id = rId
+        }
+        if (initialContext.source && String(initialContext.source).trim()) {
+          ctx.source = String(initialContext.source).trim()
+        }
+        if (Object.keys(ctx).length > 0) {
+          payload.context = ctx
+        }
+      }
+
       const res = await api.post(`/t/${tenant}/chat`, payload)
       const { message, reply, appointment, session_id, emergency, emergency_category, emergency_number } = res.data || {}
       if (session_id) {
         setSessionId(session_id)
-        localStorage.setItem('chat_session_id_' + tenant, session_id)
+        safeSetStorage('chat_session_id_' + tenant, session_id)
       }
       const aiText = reply || message || "Hmm, I didn’t catch that."
-      const isEmergency = Boolean(emergency) || isEmergencyReply(aiText)
+      const isEmergency = Boolean(emergency)
 
       setMessages((prev) => [
         ...prev,
@@ -134,13 +220,23 @@ export default function Chatbot({ tenant = 'default' }) {
       ])
       if (appointment) setToast('Appointment created!')
     } catch (e) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'ai',
-          text: "I'm having trouble connecting right now. Please check your connection and try sending your message again.",
-        },
-      ])
+      if (e.response?.data?.code === 'BOOKING_DISABLED') {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'ai',
+            text: e.response.data.message || 'Online booking is currently disabled for this clinic.',
+          },
+        ])
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'ai',
+            text: "I'm having trouble connecting right now. Please check your connection and try sending your message again.",
+          },
+        ])
+      }
     } finally {
       setLoading(false)
     }
@@ -154,9 +250,11 @@ export default function Chatbot({ tenant = 'default' }) {
   }
 
   return (
-    <div className="max-w-3xl mx-auto p-4">
+    <div className={isEmbed ? 'w-full h-full flex flex-col p-3 sm:p-4 bg-white' : 'max-w-3xl mx-auto p-4'}>
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-semibold text-gray-900">AI Doctor Appointment Chatbot</h1>
+        <h1 className="text-2xl font-semibold text-gray-900">
+          {publicConfig?.name ? publicConfig.name : 'AI Doctor Appointment Chatbot'}
+        </h1>
         <button
           onClick={startNewConversation}
           className="text-xs sm:text-sm px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 transition"
@@ -165,7 +263,7 @@ export default function Chatbot({ tenant = 'default' }) {
         </button>
       </div>
 
-      <div className="border rounded bg-white h-[60vh] p-4 overflow-y-auto space-y-3 shadow">
+      <div className={`border rounded bg-white p-4 overflow-y-auto space-y-3 shadow ${isEmbed ? 'flex-1 min-h-[300px]' : 'h-[60vh]'}`}>
         {messages.map((m, i) => (
           <MessageBubble
             key={i}
@@ -185,7 +283,25 @@ export default function Chatbot({ tenant = 'default' }) {
         <div ref={bottomRef} />
       </div>
 
-      <div className="mt-3 flex gap-2">
+      {/* Task B9 Disclosure above chat input */}
+      <div className="mt-2 text-xs text-slate-500 leading-relaxed">
+        This assistant collects your name, preferred time and reason for visit to book an appointment at {clinicName}. Messages are processed by an AI service.
+        {privacyUrl && (
+          <>
+            {' '}
+            <a
+              href={privacyUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline text-blue-600 hover:text-blue-800 font-medium"
+            >
+              Privacy Policy
+            </a>
+          </>
+        )}
+      </div>
+
+      <div className="mt-2 flex gap-2">
         <textarea
           value={input}
           maxLength={1000}

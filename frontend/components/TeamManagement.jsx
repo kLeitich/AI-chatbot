@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import api from '../lib/api'
 
 const AVAILABLE_PERMISSIONS = [
@@ -52,7 +52,7 @@ export default function TeamManagement({ tenant }) {
   const [editPermError, setEditPermError] = useState('')
   const [editPermSubmitting, setEditPermSubmitting] = useState(false)
 
-  const loadUsers = async () => {
+  const loadUsers = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
@@ -63,11 +63,11 @@ export default function TeamManagement({ tenant }) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [tenant])
 
   useEffect(() => {
     loadUsers()
-  }, [tenant])
+  }, [loadUsers])
 
   const handleToggleStatus = async (user) => {
     const newStatus = user.status === 'active' ? 'disabled' : 'active'
@@ -202,8 +202,8 @@ export default function TeamManagement({ tenant }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-slate-900">Clinic Team & Permissions</h2>
-          <p className="text-sm text-slate-500">Manage clinic staff, presets, and access privileges.</p>
+          <h2 className="text-xl font-semibold text-slate-900">Team & Access</h2>
+          <p className="text-sm text-slate-500">Add users and control what each person can do</p>
         </div>
         <button
           onClick={() => setShowAddModal(true)}

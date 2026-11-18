@@ -4,6 +4,7 @@ import { render, screen } from '@testing-library/react'
 import { PermissionProvider, usePermissions } from '../context/PermissionContext'
 import AdminDashboard from '../components/AdminDashboard'
 import AppointmentTable from '../components/AppointmentTable'
+import Calendar from '../components/Calendar'
 import api from '../lib/api'
 
 vi.mock('next/navigation', () => ({
@@ -86,10 +87,51 @@ describe('Permission Matrix and View Guards', () => {
     await screen.findByText('yes')
   })
 
-  it('evaluates tenant_admin permissions correctly for any permission', async () => {
+  it('evaluates manager preset permissions correctly', async () => {
+    function MultiCheck() {
+      const { can } = usePermissions()
+      return (
+        <div>
+          <span data-testid="can-delete">{can('appointments.delete') ? 'yes' : 'no'}</span>
+          <span data-testid="can-doc-manage">{can('doctors.manage') ? 'yes' : 'no'}</span>
+          <span data-testid="can-settings">{can('settings.manage') ? 'yes' : 'no'}</span>
+        </div>
+      )
+    }
+
     api.get.mockResolvedValueOnce({
       data: {
         id: 3,
+        role: 'staff',
+        permissions: [
+          'appointments.view',
+          'appointments.create',
+          'appointments.edit',
+          'appointments.cancel',
+          'appointments.delete',
+          'doctors.view',
+          'doctors.manage',
+          'reasons.manage',
+        ],
+      },
+    })
+
+    render(
+      <PermissionProvider tenant="default">
+        <MultiCheck />
+      </PermissionProvider>
+    )
+
+    await screen.findByTestId('can-delete')
+    expect(screen.getByTestId('can-delete').textContent).toBe('yes')
+    expect(screen.getByTestId('can-doc-manage').textContent).toBe('yes')
+    expect(screen.getByTestId('can-settings').textContent).toBe('no')
+  })
+
+  it('evaluates tenant_admin permissions correctly for any permission', async () => {
+    api.get.mockResolvedValueOnce({
+      data: {
+        id: 4,
         role: 'tenant_admin',
         permissions: [],
       },
@@ -156,6 +198,76 @@ describe('Permission Matrix and View Guards', () => {
     expect(screen.getByText('Edit')).toBeInTheDocument()
     expect(screen.getByText('Cancel')).toBeInTheDocument()
     expect(screen.getByText('Delete')).toBeInTheDocument()
+  })
+
+  it('renders Calendar action controls according to viewer, receptionist, manager, and tenant_admin permissions', () => {
+    const onEdit = vi.fn()
+    const onCancel = vi.fn()
+    const onDelete = vi.fn()
+    const onAdd = vi.fn()
+
+    const targetDate = new Date('2026-11-15T10:00:00')
+
+    // 1. Viewer: canCreate=false, canEdit=false, canCancel=false, canDelete=false
+    const { rerender } = render(
+      <Calendar
+        date={targetDate}
+        view="month"
+        appointments={sampleAppointments}
+        onAdd={onAdd}
+        onEdit={onEdit}
+        onCancel={onCancel}
+        onDelete={onDelete}
+        canCreate={false}
+        canEdit={false}
+        canCancel={false}
+        canDelete={false}
+      />
+    )
+    expect(screen.getByText(/Jane Doe/i)).toBeInTheDocument()
+    expect(screen.queryByTitle('Edit')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('Cancel')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('Delete')).not.toBeInTheDocument()
+
+    // 2. Receptionist: canCreate=true, canEdit=true, canCancel=true, canDelete=false
+    rerender(
+      <Calendar
+        date={targetDate}
+        view="month"
+        appointments={sampleAppointments}
+        onAdd={onAdd}
+        onEdit={onEdit}
+        onCancel={onCancel}
+        onDelete={onDelete}
+        canCreate={true}
+        canEdit={true}
+        canCancel={true}
+        canDelete={false}
+      />
+    )
+    expect(screen.getByTitle('Edit')).toBeInTheDocument()
+    expect(screen.getByTitle('Cancel')).toBeInTheDocument()
+    expect(screen.queryByTitle('Delete')).not.toBeInTheDocument()
+
+    // 3. Manager: canCreate=true, canEdit=true, canCancel=true, canDelete=true
+    rerender(
+      <Calendar
+        date={targetDate}
+        view="month"
+        appointments={sampleAppointments}
+        onAdd={onAdd}
+        onEdit={onEdit}
+        onCancel={onCancel}
+        onDelete={onDelete}
+        canCreate={true}
+        canEdit={true}
+        canCancel={true}
+        canDelete={true}
+      />
+    )
+    expect(screen.getByTitle('Edit')).toBeInTheDocument()
+    expect(screen.getByTitle('Cancel')).toBeInTheDocument()
+    expect(screen.getByTitle('Delete')).toBeInTheDocument()
   })
 
   it('hides New Appointment, Team tab, and Audit tab on AdminDashboard for viewer', async () => {

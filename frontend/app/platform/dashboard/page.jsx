@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import DashboardNav from '../../../components/DashboardNav'
 import api from '../../../lib/api'
 
@@ -31,25 +31,25 @@ export default function PlatformDashboardPage() {
   const [auditEntityFilter, setAuditEntityFilter] = useState('')
   const [auditPage, setAuditPage] = useState(1)
 
-  const loadTenants = async () => {
+  const loadTenants = useCallback(async () => {
     try {
       const res = await api.get('/platform/tenants')
       setTenants(res.data || [])
     } catch (err) {
       console.error(err)
     }
-  }
+  }, [])
 
-  const loadUsers = async () => {
+  const loadUsers = useCallback(async () => {
     try {
       const res = await api.get('/platform/users')
       setUsers(res.data || [])
     } catch (err) {
       console.error(err)
     }
-  }
+  }, [])
 
-  const loadDoctors = async () => {
+  const loadDoctors = useCallback(async () => {
     try {
       const params = new URLSearchParams()
       if (docTenantFilter) params.set('tenant_id', docTenantFilter)
@@ -58,9 +58,9 @@ export default function PlatformDashboardPage() {
     } catch (err) {
       console.error(err)
     }
-  }
+  }, [docTenantFilter])
 
-  const loadAppointments = async () => {
+  const loadAppointments = useCallback(async () => {
     try {
       const params = new URLSearchParams()
       if (apTenantFilter) params.set('tenant_id', apTenantFilter)
@@ -76,9 +76,9 @@ export default function PlatformDashboardPage() {
     } catch (err) {
       console.error(err)
     }
-  }
+  }, [apTenantFilter, apDoctorFilter, apStartFilter, apEndFilter, apStatusFilter, apPage])
 
-  const loadAuditLogs = async () => {
+  const loadAuditLogs = useCallback(async () => {
     try {
       const params = new URLSearchParams()
       if (auditActionFilter) params.set('action', auditActionFilter)
@@ -91,7 +91,7 @@ export default function PlatformDashboardPage() {
     } catch (err) {
       console.error(err)
     }
-  }
+  }, [auditActionFilter, auditEntityFilter, auditPage])
 
   useEffect(() => {
     const init = async () => {
@@ -106,19 +106,19 @@ export default function PlatformDashboardPage() {
       }
     }
     init()
-  }, [])
+  }, [loadTenants, loadUsers, loadDoctors, loadAppointments, loadAuditLogs])
 
   useEffect(() => {
     if (tab === 'doctors') loadDoctors()
-  }, [docTenantFilter, tab])
+  }, [loadDoctors, tab])
 
   useEffect(() => {
     if (tab === 'appointments') loadAppointments()
-  }, [apTenantFilter, apDoctorFilter, apStartFilter, apEndFilter, apStatusFilter, apPage, tab])
+  }, [loadAppointments, tab])
 
   useEffect(() => {
     if (tab === 'audit') loadAuditLogs()
-  }, [auditActionFilter, auditEntityFilter, auditPage, tab])
+  }, [loadAuditLogs, tab])
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -401,13 +401,14 @@ export default function PlatformDashboardPage() {
                         <th className="p-3 text-left">Date</th>
                         <th className="p-3 text-left">Time</th>
                         <th className="p-3 text-left">Reason</th>
+                        <th className="p-3 text-left">Source</th>
                         <th className="p-3 text-left">Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">
                       {appointmentsData.appointments.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="p-6 text-center text-slate-500">
+                          <td colSpan={9} className="p-6 text-center text-slate-500">
                             No appointments found matching filters.
                           </td>
                         </tr>
@@ -421,6 +422,7 @@ export default function PlatformDashboardPage() {
                             <td className="p-3 text-slate-700 whitespace-nowrap">{a.date}</td>
                             <td className="p-3 text-slate-700 whitespace-nowrap">{a.time}</td>
                             <td className="p-3 text-slate-600 max-w-xs truncate">{a.reason}</td>
+                            <td className="p-3 text-slate-600 font-mono text-xs">{a.source || '-'}</td>
                             <td className="p-3">
                               <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
                                 a.status === 'confirmed' ? 'bg-green-100 text-green-800' :

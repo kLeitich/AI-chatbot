@@ -9,16 +9,35 @@ import DashboardNav from './DashboardNav'
 import TeamManagement from './TeamManagement'
 import ClinicSetup from './ClinicSetup'
 import AuditLogTable from './AuditLogTable'
+import ShareAndEmbed from './ShareAndEmbed'
+import AppointmentListView from './AppointmentListView'
+import DoctorManagement from './DoctorManagement'
+
+function extractErrorInfo(err) {
+  if (!err) return null
+  const status = err.response?.status || 'ERROR'
+  const code = err.response?.data?.code || (err.response?.status ? `HTTP_${err.response.status}` : 'REQUEST_FAILED')
+  const message = err.response?.data?.message || err.message || 'An unexpected error occurred'
+  return { status, code, message }
+}
 
 export default function AdminDashboard({ tenant = 'default' }) {
   const permCtx = usePermissions()
   const [appointments, setAppointments] = useState([])
   const [editing, setEditing] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)
   const [view, setView] = useState('table')
   const [calendarMode, setCalendarMode] = useState('month')
   const [currentDate, setCurrentDate] = useState(new Date())
   const router = useRouter()
+
+  // Default to list view on small screens
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      setView('list')
+    }
+  }, [])
 
   // Modal helpers for doctors, availability, and conflict alternatives
   const [activeDoctors, setActiveDoctors] = useState([])
@@ -53,8 +72,11 @@ export default function AdminDashboard({ tenant = 'default' }) {
     loadDoctors()
   }, [loadDoctors])
 
+  const editingDoctor = editing?.doctor
+  const editingDate = editing?.date
+
   useEffect(() => {
-    if (!editing || !editing.doctor || !editing.date) {
+    if (!editingDoctor || !editingDate) {
       setAvailableSlots([])
       return
     }
@@ -63,7 +85,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
       setLoadingSlots(true)
       try {
         const res = await api.get(`/t/${tenant}/availability`, {
-          params: { doctor: editing.doctor, date: editing.date },
+          params: { doctor: editingDoctor, date: editingDate },
         })
         if (!cancelled) {
           setAvailableSlots(res.data?.slots || [])
@@ -78,7 +100,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
     return () => {
       cancelled = true
     }
-  }, [editing?.doctor, editing?.date, tenant])
+  }, [editingDoctor, editingDate, tenant])
 
   // User profile & permissions from /t/:tenant/me
   const [localUserProfile, setLocalUserProfile] = useState(null)
@@ -116,6 +138,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
   // Check /me and load appointments
   const loadProfileAndData = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       let profile = permCtx.user
       if (!profile) {
@@ -140,11 +163,53 @@ export default function AdminDashboard({ tenant = 'default' }) {
       if (e?.response?.status === 401) {
         localStorage.removeItem('token')
         router.replace(`/t/${tenant}/login`)
+        return
       }
+      setLoadError(extractErrorInfo(e))
     } finally {
       setLoading(false)
     }
   }, [tenant, permCtx.user, router])
+
+  useEffect(() => {
+    if (permCtx.error && !permCtx.user && permCtx.error.response?.status !== 401) {
+      setLoadError(extractErrorInfo(permCtx.error))
+      setLoading(false)
+    }
+  }, [permCtx.error, permCtx.user])
+
+  const handleRetry = async () => {
+    setLoading(true)
+    setLoadError(null)
+    try {
+      if (permCtx.refresh) {
+        await permCtx.refresh()
+      }
+      const meRes = await api.get(`/t/${tenant}/me`)
+      const profile = meRes.data
+      setLocalUserProfile(profile)
+      if (profile.must_change_password) {
+        setForcePasswordChange(true)
+      }
+      const canView = profile.role === 'tenant_admin' || (profile.permissions || []).includes('appointments.view')
+      if (canView) {
+        const res = await api.get(`/t/${tenant}/admin/appointments`)
+        setAppointments(res.data || [])
+      } else {
+        setAppointments([])
+      }
+      setLoadError(null)
+    } catch (e) {
+      if (e?.response?.status === 401) {
+        localStorage.removeItem('token')
+        router.replace(`/t/${tenant}/login`)
+        return
+      }
+      setLoadError(extractErrorInfo(e))
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
     loadProfileAndData()
@@ -157,7 +222,10 @@ export default function AdminDashboard({ tenant = 'default' }) {
   const canEditAppointments = can('appointments.edit')
   const canCancelAppointments = can('appointments.cancel')
   const canDeleteAppointments = can('appointments.delete')
-  const canAccessSetup = can('doctors.manage') || can('reasons.manage') || can('settings.manage')
+  const canAccessDoctors = can('doctors.view') || can('doctors.manage')
+  const canAccessSetup = can('reasons.manage') || can('settings.manage')
+  const canManageSettings = can('settings.manage')
+  const canAccessAudit = isTenantAdmin
 
   const filtered = useMemo(() => {
     const match = (val, q) => String(val || '').toLowerCase().includes(String(q || '').toLowerCase())
@@ -344,26 +412,134 @@ export default function AdminDashboard({ tenant = 'default' }) {
       <div className="max-w-5xl mx-auto p-4 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {view !== 'team' && view !== 'setup' && view !== 'audit' && canCreateAppointments && (
+            {view !== 'team' && view !== 'setup' && view !== 'share' && view !== 'audit' && view !== 'doctors' && canCreateAppointments && (
               <button className="px-3 py-1 rounded bg-blue-600 text-white font-medium text-sm" onClick={onAddFromTable}>
                 + New Appointment
               </button>
             )}
 
             <div className="inline-flex border rounded overflow-hidden shadow-sm">
-              {canViewAppointments && (
+              {canViewAppointments ? (
                 <>
                   <button className={`px-3 py-1 text-sm ${view === 'table' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('table')}>Table</button>
+                  <button className={`px-3 py-1 text-sm ${view === 'list' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('list')}>List</button>
                   <button className={`px-3 py-1 text-sm ${view === 'calendar' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('calendar')}>Calendar</button>
                 </>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  title="Requires appointments.view permission"
+                  aria-label="Appointments (Locked - Requires appointments.view permission)"
+                  data-testid="tab-appointments-locked"
+                  className="px-3 py-1 text-sm font-medium bg-slate-100 text-slate-400 cursor-not-allowed inline-flex items-center gap-1 opacity-75"
+                >
+                  Appointments 🔒
+                </button>
               )}
-              {canAccessSetup && (
-                <button className={`px-3 py-1 text-sm font-medium ${view === 'setup' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('setup')}>Clinic Setup</button>
+
+              {canAccessDoctors ? (
+                <button
+                  type="button"
+                  className={`px-3 py-1 text-sm font-medium ${view === 'doctors' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`}
+                  onClick={() => setView('doctors')}
+                >
+                  Doctors
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  title="Requires doctors.view permission"
+                  aria-label="Doctors (Locked - Requires doctors.view permission)"
+                  data-testid="tab-doctors-locked"
+                  className="px-3 py-1 text-sm font-medium bg-slate-100 text-slate-400 cursor-not-allowed inline-flex items-center gap-1 opacity-75"
+                >
+                  Doctors 🔒
+                </button>
               )}
-              {isTenantAdmin && (
+
+              {canAccessSetup ? (
+                <button
+                  type="button"
+                  className={`px-3 py-1 text-sm font-medium ${view === 'setup' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`}
+                  onClick={() => setView('setup')}
+                >
+                  Clinic Setup
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  title="Requires reasons.manage or settings.manage permission"
+                  aria-label="Clinic Setup (Locked - Requires reasons.manage or settings.manage permission)"
+                  data-testid="tab-setup-locked"
+                  className="px-3 py-1 text-sm font-medium bg-slate-100 text-slate-400 cursor-not-allowed inline-flex items-center gap-1 opacity-75"
+                >
+                  Clinic Setup 🔒
+                </button>
+              )}
+
+              {canManageSettings ? (
+                <button
+                  type="button"
+                  className={`px-3 py-1 text-sm font-medium ${view === 'share' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`}
+                  onClick={() => setView('share')}
+                >
+                  Share &amp; Embed
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  title="Requires settings.manage permission"
+                  aria-label="Share & Embed (Locked - Requires settings.manage permission)"
+                  data-testid="tab-share-locked"
+                  className="px-3 py-1 text-sm font-medium bg-slate-100 text-slate-400 cursor-not-allowed inline-flex items-center gap-1 opacity-75"
+                >
+                  Share &amp; Embed 🔒
+                </button>
+              )}
+
+              {isTenantAdmin ? (
                 <>
-                  <button className={`px-3 py-1 text-sm font-medium ${view === 'team' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('team')}>Team</button>
-                  <button className={`px-3 py-1 text-sm font-medium ${view === 'audit' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`} onClick={() => setView('audit')}>Audit</button>
+                  <button
+                    type="button"
+                    className={`px-3 py-1 text-sm font-medium ${view === 'team' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`}
+                    onClick={() => setView('team')}
+                  >
+                    <span>Team</span> &amp; Access
+                  </button>
+                  <button
+                    type="button"
+                    className={`px-3 py-1 text-sm font-medium ${view === 'audit' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`}
+                    onClick={() => setView('audit')}
+                  >
+                    Audit
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled
+                    title="Requires clinic administrator access"
+                    aria-label="Team & Access (Locked - Requires clinic administrator access)"
+                    data-testid="tab-team-locked"
+                    className="px-3 py-1 text-sm font-medium bg-slate-100 text-slate-400 cursor-not-allowed inline-flex items-center gap-1 opacity-75"
+                  >
+                    Team &amp; Access 🔒
+                  </button>
+                  <button
+                    type="button"
+                    disabled
+                    title="Requires clinic administrator access"
+                    aria-label="Audit (Locked - Requires clinic administrator access)"
+                    data-testid="tab-audit-locked"
+                    className="px-3 py-1 text-sm font-medium bg-slate-100 text-slate-400 cursor-not-allowed inline-flex items-center gap-1 opacity-75"
+                  >
+                    Audit 🔒
+                  </button>
                 </>
               )}
             </div>
@@ -372,20 +548,54 @@ export default function AdminDashboard({ tenant = 'default' }) {
               <div className="inline-flex border rounded overflow-hidden">
                 <button className={`px-3 py-1 text-sm ${calendarMode === 'month' ? 'bg-gray-900 text-white' : 'bg-white'}`} onClick={() => setCalendarMode('month')}>Month</button>
                 <button className={`px-3 py-1 text-sm ${calendarMode === 'week' ? 'bg-gray-900 text-white' : 'bg-white'}`} onClick={() => setCalendarMode('week')}>Week</button>
+                <button className={`px-3 py-1 text-sm ${calendarMode === 'day' ? 'bg-gray-900 text-white' : 'bg-white'}`} onClick={() => setCalendarMode('day')}>Day</button>
               </div>
             )}
           </div>
         </div>
 
-        {view === 'team' ? (
+        {loadError ? (
+          <div
+            role="alert"
+            className="bg-red-50 border-2 border-red-300 rounded-2xl p-6 text-red-900 shadow-sm space-y-3 my-4"
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-2xl" aria-hidden="true">⚠️</span>
+              <h2 className="text-lg font-bold">Failed to Load Dashboard Data</h2>
+            </div>
+            <p className="text-sm text-red-800">
+              An error occurred while loading your profile or clinic appointments.
+            </p>
+            <div className="bg-white/90 p-3 rounded-lg border border-red-200 text-xs font-mono text-red-950 space-y-1">
+              <div><span className="font-semibold">Status:</span> {loadError.status}</div>
+              <div><span className="font-semibold">Code:</span> {loadError.code}</div>
+              {loadError.message && (
+                <div><span className="font-semibold">Details:</span> {loadError.message}</div>
+              )}
+            </div>
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={handleRetry}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg transition shadow-sm inline-flex items-center gap-2"
+              >
+                🔄 Retry
+              </button>
+            </div>
+          </div>
+        ) : view === 'doctors' ? (
+          <DoctorManagement tenant={tenant} />
+        ) : view === 'team' ? (
           <TeamManagement tenant={tenant} />
         ) : view === 'setup' ? (
-          <ClinicSetup tenant={tenant} />
+          <ClinicSetup tenant={tenant} includeDoctors={false} />
+        ) : view === 'share' ? (
+          <ShareAndEmbed tenant={tenant} />
         ) : view === 'audit' ? (
           <AuditLogTable tenant={tenant} />
         ) : (
           <>
-            {view === 'table' && (
+            {(view === 'table' || view === 'list') && (
               <div className="bg-white border rounded p-3 shadow-sm space-y-2">
                 <div className="grid grid-cols-6 gap-2">
                   <input value={fPatient} onChange={(e)=>setFPatient(e.target.value)} className="border rounded p-2 text-sm" placeholder="Filter patient" />
@@ -413,6 +623,17 @@ export default function AdminDashboard({ tenant = 'default' }) {
             ) : view === 'table' ? (
               <AppointmentTable
                 appointments={filtered}
+                onEdit={canEditAppointments ? setEditing : undefined}
+                onCancel={canCancelAppointments ? onCancel : undefined}
+                onDelete={canDeleteAppointments ? onDelete : undefined}
+                canEdit={canEditAppointments}
+                canCancel={canCancelAppointments}
+                canDelete={canDeleteAppointments}
+              />
+            ) : view === 'list' ? (
+              <AppointmentListView
+                appointments={filtered}
+                rawCount={(appointments || []).length}
                 onEdit={canEditAppointments ? setEditing : undefined}
                 onCancel={canCancelAppointments ? onCancel : undefined}
                 onDelete={canDeleteAppointments ? onDelete : undefined}
