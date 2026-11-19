@@ -9,6 +9,7 @@ import (
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 var db *gorm.DB
@@ -147,8 +148,20 @@ func initDatabase(dbPath string, appEnv string) uint {
 		dsn += "&_journal_mode=WAL&_busy_timeout=5000"
 	}
 
+	dbLogger := logger.New(
+		log.New(os.Stdout, "\r\n", log.LstdFlags),
+		logger.Config{
+			SlowThreshold:             200 * time.Millisecond,
+			LogLevel:                  logger.Warn,
+			IgnoreRecordNotFoundError: true,
+			Colorful:                  false,
+		},
+	)
+
 	var err error
-	db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: dbLogger,
+	})
 	if err != nil {
 		log.Fatalf("failed to connect database: %v", err)
 	}
