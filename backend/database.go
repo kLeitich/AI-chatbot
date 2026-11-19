@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -135,19 +136,8 @@ func migrateUsersToPermissions() {
 	}
 }
 
-// initDatabase connects to SQLite with WAL mode and busy timeout, runs migrations, and conditionally seeds data
+// initDatabase connects to PostgreSQL (if DATABASE_URL is set) or SQLite (for local dev/tests), runs migrations, and conditionally seeds data
 func initDatabase(dbPath string, appEnv string) uint {
-	// 1. Back up database before migrations
-	backupDatabaseFile(dbPath)
-
-	// 2. Configure SQLite with WAL mode and busy timeout via DSN options
-	dsn := dbPath
-	if !strings.Contains(dsn, "?") {
-		dsn += "?_journal_mode=WAL&_busy_timeout=5000"
-	} else {
-		dsn += "&_journal_mode=WAL&_busy_timeout=5000"
-	}
-
 	dbLogger := logger.New(
 		log.New(os.Stdout, "\r\n", log.LstdFlags),
 		logger.Config{
@@ -158,12 +148,36 @@ func initDatabase(dbPath string, appEnv string) uint {
 		},
 	)
 
+	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	if databaseURL == "" {
+		databaseURL = strings.TrimSpace(os.Getenv("POSTGRES_URL"))
+	}
+
 	var err error
-	db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{
-		Logger: dbLogger,
-	})
-	if err != nil {
-		log.Fatalf("failed to connect database: %v", err)
+	if databaseURL != "" {
+		log.Printf("[database] Connecting to PostgreSQL database...")
+		db, err = gorm.Open(postgres.Open(databaseURL), &gorm.Config{
+			Logger: dbLogger,
+		})
+		if err != nil {
+			log.Fatalf("failed to connect to PostgreSQL database: %v", err)
+		}
+		log.Printf("[database] Successfully connected to PostgreSQL!")
+	} else {
+		// SQLite fallback
+		backupDatabaseFile(dbPath)
+		dsn := dbPath
+		if !strings.Contains(dsn, "?") {
+			dsn += "?_journal_mode=WAL&_busy_timeout=5000"
+		} else {
+			dsn += "&_journal_mode=WAL&_busy_timeout=5000"
+		}
+		db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{
+			Logger: dbLogger,
+		})
+		if err != nil {
+			log.Fatalf("failed to connect to SQLite database: %v", err)
+		}
 	}
 
 	if err := db.AutoMigrate(&Tenant{}, &User{}, &Doctor{}, &ReasonOption{}, &Appointment{}, &AuditLog{}, &UserPermission{}); err != nil {
