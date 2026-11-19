@@ -154,3 +154,50 @@ func TestValidateConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestIsAllowedCORSOrigin(t *testing.T) {
+	configured := []string{
+		"https://custom-clinic.com",
+		"*.partner-health.org",
+	}
+
+	tests := []struct {
+		origin  string
+		allowed bool
+	}{
+		// Vercel deployment origins
+		{"https://ai-chatbot-gamma-blue-98.vercel.app", true},
+		{"https://ai-chatbot-preview-123.vercel.app", true},
+		{"https://booka-front.vercel.app", true},
+
+		// Booka official domains
+		{"https://www.booka.co.ke", true},
+		{"https://booka.co.ke", true},
+		{"https://admin.booka.co.ke", true},
+
+		// Localhost development
+		{"http://localhost:3000", true},
+		{"http://localhost:8080", true},
+		{"http://127.0.0.1:3000", true},
+
+		// Configured origins
+		{"https://custom-clinic.com", true},
+		{"https://sub.partner-health.org", true},
+
+		// Render service origins
+		{"https://ai-chatbot-1vkx.onrender.com", true},
+
+		// Disallowed origins
+		{"https://malicious-site.com", false},
+		{"https://evil-vercel.app.attacker.com", false},
+		{"http://vercel.app", false},
+		{"", false},
+	}
+
+	for _, tc := range tests {
+		got := isAllowedCORSOrigin(tc.origin, configured)
+		if got != tc.allowed {
+			t.Errorf("isAllowedCORSOrigin(%q) = %v, want %v", tc.origin, got, tc.allowed)
+		}
+	}
+}

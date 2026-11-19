@@ -43,6 +43,52 @@ func loadEnvFile() {
 	}
 }
 
+// isAllowedCORSOrigin checks whether an incoming request Origin is permitted to access the API.
+func isAllowedCORSOrigin(origin string, configuredOrigins []string) bool {
+	origin = strings.ToLower(strings.TrimSpace(origin))
+	if origin == "" {
+		return false
+	}
+
+	// 1. Check configured origins from FRONTEND_URL and ALLOWED_ORIGINS
+	for _, allowed := range configuredOrigins {
+		clean := strings.ToLower(strings.TrimSpace(allowed))
+		if clean == "" {
+			continue
+		}
+		if origin == clean {
+			return true
+		}
+		if strings.HasPrefix(clean, "*.") && strings.HasSuffix(origin, clean[1:]) {
+			return true
+		}
+	}
+
+	// 2. Localhost development origins
+	if strings.HasPrefix(origin, "http://localhost:") || origin == "http://localhost" ||
+		strings.HasPrefix(origin, "http://127.0.0.1:") || origin == "http://127.0.0.1" {
+		return true
+	}
+
+	// 3. Official domain and subdomains
+	if origin == "https://www.booka.co.ke" || origin == "https://booka.co.ke" ||
+		strings.HasSuffix(origin, ".booka.co.ke") {
+		return true
+	}
+
+	// 4. Vercel deployments (production, staging, preview branch deployments)
+	if strings.HasPrefix(origin, "https://") && strings.HasSuffix(origin, ".vercel.app") {
+		return true
+	}
+
+	// 5. Render web service preview / self origins
+	if strings.HasPrefix(origin, "https://") && strings.HasSuffix(origin, ".onrender.com") {
+		return true
+	}
+
+	return false
+}
+
 func main() {
 	loadEnvFile()
 
@@ -134,19 +180,25 @@ func main() {
 		},
 	})
 
-	// CORS Configuration
-	frontendURL := getEnv("FRONTEND_URL", "http://localhost:3000")
-	allowedOrigins := "http://localhost:3000"
-	if frontendURL != "http://localhost:3000" {
-		allowedOrigins = frontendURL + ", http://localhost:3000"
+	// CORS Configuration: support comma-separated origins, localhost, *.booka.co.ke, and *.vercel.app
+	rawFrontendURL := getEnv("FRONTEND_URL", "http://localhost:3000")
+	rawAllowedOrigins := getEnv("ALLOWED_ORIGINS", "")
+	var configuredOrigins []string
+	for _, item := range strings.Split(rawFrontendURL+","+rawAllowedOrigins, ",") {
+		trimmed := strings.TrimSpace(item)
+		if trimmed != "" {
+			configuredOrigins = append(configuredOrigins, trimmed)
+		}
 	}
 
-	log.Printf("[config] Allowing frontend origins: %s", allowedOrigins)
+	log.Printf("[config] Configured frontend origins: %v (also allowing localhost, *.booka.co.ke, *.vercel.app)", configuredOrigins)
 
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     allowedOrigins,
-		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
-		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
+		AllowOriginsFunc: func(origin string) bool {
+			return isAllowedCORSOrigin(origin, configuredOrigins)
+		},
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Requested-With",
+		AllowMethods:     "GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD",
 		AllowCredentials: true,
 	}))
 
