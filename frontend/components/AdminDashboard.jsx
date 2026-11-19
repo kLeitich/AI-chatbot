@@ -573,7 +573,13 @@ export default function AdminDashboard({ tenant = 'default' }) {
                 <div><span className="font-semibold">Details:</span> {loadError.message}</div>
               )}
             </div>
-            <div className="pt-2">
+            {loadError.status === 404 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900 space-y-1">
+                <p className="font-semibold">Clinic or user account not found on the backend server.</p>
+                <p>If your server recently restarted or uses an ephemeral database, the clinic may need to be registered again.</p>
+              </div>
+            )}
+            <div className="pt-2 flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={handleRetry}
@@ -581,6 +587,22 @@ export default function AdminDashboard({ tenant = 'default' }) {
               >
                 🔄 Retry
               </button>
+              {loadError.status === 404 && (
+                <>
+                  <a
+                    href="/signup"
+                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-lg transition shadow-sm inline-flex items-center"
+                  >
+                    Register Clinic (/signup)
+                  </a>
+                  <a
+                    href={`/t/${tenant}/login`}
+                    className="px-4 py-2 border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-lg transition shadow-sm inline-flex items-center"
+                  >
+                    Log In Again
+                  </a>
+                </>
+              )}
             </div>
           </div>
         ) : view === 'doctors' ? (
