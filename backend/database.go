@@ -160,27 +160,12 @@ func initDatabase(dbPath string, appEnv string) uint {
 	migrateUsersToPermissions()
 	backfillTenantSettings()
 
-	if strings.EqualFold(appEnv, "development") {
-		defaultTenantID := ensureDefaultTenant()
-		backfillTenantIDs(defaultTenantID)
-		seedSampleData(defaultTenantID)
-		backfillDoctorIDs()
-		checkDuplicatesAndCreateActiveSlotIndex()
-		return defaultTenantID
-	}
-
-	// In non-development, do not auto-seed sample appointments or default tenant
-	var t Tenant
-	if err := db.Where("slug = ?", defaultTenantSlug).First(&t).Error; err == nil {
-		backfillTenantIDs(t.ID)
-		backfillDoctorIDs()
-		checkDuplicatesAndCreateActiveSlotIndex()
-		return t.ID
-	}
-
+	defaultTenantID := ensureDefaultTenant()
+	backfillTenantIDs(defaultTenantID)
+	seedSampleData(defaultTenantID)
 	backfillDoctorIDs()
 	checkDuplicatesAndCreateActiveSlotIndex()
-	return 0
+	return defaultTenantID
 }
 
 // ensureDefaultTenant creates (or loads) the default tenant used for local dev.
