@@ -141,7 +141,7 @@ export default function CompanySignup() {
 
         <div className="text-center text-sm text-gray-600">
           Already have an account?{' '}
-          <a href="/t/default/login" className="text-blue-600 hover:underline">
+          <a href="/login" className="text-blue-600 hover:underline">
             Sign In
           </a>
         </div>

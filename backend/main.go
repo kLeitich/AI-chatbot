@@ -208,6 +208,8 @@ func main() {
 	})
 
 	// Global auth endpoints (rate limited)
+	app.Post("/auth/login", authLimiter, globalLoginHandler)
+	app.Post("/login", authLimiter, globalLoginHandler)
 	app.Post("/auth/register", authLimiter, companyRegisterHandler)
 	app.Post("/auth/platform/login", platformLoginLimiter, platformLoginHandler)
 	app.Post("/platform/login", platformLoginLimiter, platformLoginHandler)

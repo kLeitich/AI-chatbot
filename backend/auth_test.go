@@ -24,6 +24,8 @@ func setupAuthTestApp(t *testing.T) (*fiber.App, uint, string) {
 
 	app := fiber.New(fiber.Config{ErrorHandler: customErrorHandler})
 
+	app.Post("/auth/login", globalLoginHandler)
+	app.Post("/login", globalLoginHandler)
 	app.Post("/auth/register", companyRegisterHandler)
 	app.Post("/auth/platform/login", platformLoginHandler)
 	app.Post("/platform/login", platformLoginHandler)
@@ -450,6 +452,168 @@ func TestAuth401Vs403Semantics(t *testing.T) {
 	json.NewDecoder(respWrongTenant.Body).Decode(&bodyWrongTenant)
 	if bodyWrongTenant["code"] != ErrCodePermissionDenied {
 		t.Errorf("Expected code=%s for cross-tenant access, got %v", ErrCodePermissionDenied, bodyWrongTenant["code"])
+	}
+}
+
+func TestGlobalLogin(t *testing.T) {
+	app, _, _ := setupAuthTestApp(t)
+
+	// 1. Seed a Platform Admin
+	hashedPlatPass, _ := hashPassword("PlatformPass123!")
+	platAdmin := User{
+		Email:        "superadmin@platform.internal",
+		Password:     hashedPlatPass,
+		Role:         RolePlatformAdmin,
+		Status:       "active",
+		TokenVersion: 1,
+	}
+	if err := db.Create(&platAdmin).Error; err != nil {
+		t.Fatalf("Failed to seed platform admin: %v", err)
+	}
+
+	// 2. Register a Company (Tenant Admin)
+	regBody := map[string]string{
+		"company_name":   "SkyStay Listing Services Kenya Ltd",
+		"admin_email":    "admin2@example.com",
+		"admin_password": "SkyStayPassword123!",
+	}
+	regJSON, _ := json.Marshal(regBody)
+	reqReg := httptest.NewRequest("POST", "/auth/register", bytes.NewReader(regJSON))
+	reqReg.Header.Set("Content-Type", "application/json")
+	respReg, err := app.Test(reqReg, 10000)
+	if err != nil || respReg.StatusCode != http.StatusCreated {
+		t.Fatalf("Failed to register company: status=%d err=%v", respReg.StatusCode, err)
+	}
+
+	var regResp map[string]interface{}
+	json.NewDecoder(respReg.Body).Decode(&regResp)
+	tenantSlug := regResp["tenant_id"].(string)
+	if tenantSlug != "skystay-listing-services-kenya-ltd" {
+		t.Fatalf("Unexpected tenant_id: %v", tenantSlug)
+	}
+
+	// 3. Seed a Staff User under that company
+	var companyTenant Tenant
+	db.Where("slug = ?", tenantSlug).First(&companyTenant)
+	hashedStaffPass, _ := hashPassword("StaffSecretPass123!")
+	staffUser := User{
+		TenantID:     companyTenant.ID,
+		Email:        "staff2@example.com",
+		Password:     hashedStaffPass,
+		Role:         RoleStaff,
+		Status:       "active",
+		TokenVersion: 1,
+	}
+	db.Create(&staffUser)
+
+	// Test A: Global Login as Platform Admin -> /platform/dashboard
+	platReqBody := map[string]string{
+		"email":    "superadmin@platform.internal",
+		"password": "PlatformPass123!",
+	}
+	platJSON, _ := json.Marshal(platReqBody)
+	reqPlat := httptest.NewRequest("POST", "/auth/login", bytes.NewReader(platJSON))
+	reqPlat.Header.Set("Content-Type", "application/json")
+	respPlat, err := app.Test(reqPlat, 10000)
+	if err != nil || respPlat.StatusCode != http.StatusOK {
+		t.Fatalf("Platform admin global login failed: status=%d err=%v", respPlat.StatusCode, err)
+	}
+	var platResp map[string]interface{}
+	json.NewDecoder(respPlat.Body).Decode(&platResp)
+	if platResp["role"] != RolePlatformAdmin {
+		t.Errorf("Expected role=%s, got %v", RolePlatformAdmin, platResp["role"])
+	}
+	if platResp["redirect_url"] != "/platform/dashboard" {
+		t.Errorf("Expected redirect_url=/platform/dashboard, got %v", platResp["redirect_url"])
+	}
+	if platResp["token"] == nil || platResp["token"] == "" {
+		t.Errorf("Expected non-empty token")
+	}
+
+	// Test B: Global Login as Tenant Admin via /login -> /t/skystay-listing-services-kenya-ltd/admin/dashboard
+	tenantAdminReqBody := map[string]string{
+		"email":    "admin2@example.com",
+		"password": "SkyStayPassword123!",
+	}
+	tenantAdminJSON, _ := json.Marshal(tenantAdminReqBody)
+	reqTenantAdmin := httptest.NewRequest("POST", "/login", bytes.NewReader(tenantAdminJSON))
+	reqTenantAdmin.Header.Set("Content-Type", "application/json")
+	respTenantAdmin, err := app.Test(reqTenantAdmin, 10000)
+	if err != nil || respTenantAdmin.StatusCode != http.StatusOK {
+		t.Fatalf("Tenant admin global login failed: status=%d err=%v", respTenantAdmin.StatusCode, err)
+	}
+	var tenantAdminResp map[string]interface{}
+	json.NewDecoder(respTenantAdmin.Body).Decode(&tenantAdminResp)
+	if tenantAdminResp["role"] != RoleTenantAdmin {
+		t.Errorf("Expected role=%s, got %v", RoleTenantAdmin, tenantAdminResp["role"])
+	}
+	if tenantAdminResp["tenant_id"] != tenantSlug {
+		t.Errorf("Expected tenant_id=%s, got %v", tenantSlug, tenantAdminResp["tenant_id"])
+	}
+	expectedRedirect := fmt.Sprintf("/t/%s/admin/dashboard", tenantSlug)
+	if tenantAdminResp["redirect_url"] != expectedRedirect {
+		t.Errorf("Expected redirect_url=%s, got %v", expectedRedirect, tenantAdminResp["redirect_url"])
+	}
+
+	// Test C: Global Login as Staff -> /t/skystay-listing-services-kenya-ltd/admin/dashboard
+	staffReqBody := map[string]string{
+		"email":    "staff2@example.com",
+		"password": "StaffSecretPass123!",
+	}
+	staffJSON, _ := json.Marshal(staffReqBody)
+	reqStaff := httptest.NewRequest("POST", "/auth/login", bytes.NewReader(staffJSON))
+	reqStaff.Header.Set("Content-Type", "application/json")
+	respStaff, err := app.Test(reqStaff, 10000)
+	if err != nil || respStaff.StatusCode != http.StatusOK {
+		t.Fatalf("Staff global login failed: status=%d err=%v", respStaff.StatusCode, err)
+	}
+	var staffResp map[string]interface{}
+	json.NewDecoder(respStaff.Body).Decode(&staffResp)
+	if staffResp["role"] != RoleStaff {
+		t.Errorf("Expected role=%s, got %v", RoleStaff, staffResp["role"])
+	}
+	if staffResp["redirect_url"] != expectedRedirect {
+		t.Errorf("Expected redirect_url=%s, got %v", expectedRedirect, staffResp["redirect_url"])
+	}
+
+	// Test D: Invalid Password -> 401
+	wrongReqBody := map[string]string{
+		"email":    "admin2@example.com",
+		"password": "WrongPassword123!",
+	}
+	wrongJSON, _ := json.Marshal(wrongReqBody)
+	reqWrong := httptest.NewRequest("POST", "/auth/login", bytes.NewReader(wrongJSON))
+	reqWrong.Header.Set("Content-Type", "application/json")
+	respWrong, err := app.Test(reqWrong, 10000)
+	if err != nil || respWrong.StatusCode != http.StatusUnauthorized {
+		t.Errorf("Expected 401 for wrong password, got %d", respWrong.StatusCode)
+	}
+
+	// Test E: Non-existent User -> 401
+	nonExistentBody := map[string]string{
+		"email":    "doesnotexist@example.com",
+		"password": "SomePassword123!",
+	}
+	nonExistentJSON, _ := json.Marshal(nonExistentBody)
+	reqNonExistent := httptest.NewRequest("POST", "/auth/login", bytes.NewReader(nonExistentJSON))
+	reqNonExistent.Header.Set("Content-Type", "application/json")
+	respNonExistent, err := app.Test(reqNonExistent, 10000)
+	if err != nil || respNonExistent.StatusCode != http.StatusUnauthorized {
+		t.Errorf("Expected 401 for non-existent user, got %d", respNonExistent.StatusCode)
+	}
+
+	// Test F: Disabled User -> 401 with Account Disabled
+	db.Model(&User{}).Where("id = ?", staffUser.ID).Update("status", "disabled")
+	reqDis := httptest.NewRequest("POST", "/auth/login", bytes.NewReader(staffJSON))
+	reqDis.Header.Set("Content-Type", "application/json")
+	respDis, err := app.Test(reqDis, 10000)
+	if err != nil || respDis.StatusCode != http.StatusUnauthorized {
+		t.Errorf("Expected 401 for disabled user, got %d", respDis.StatusCode)
+	}
+	var bodyDis map[string]interface{}
+	json.NewDecoder(respDis.Body).Decode(&bodyDis)
+	if bodyDis["code"] != ErrCodeAccountDisabled {
+		t.Errorf("Expected code=%s for disabled account, got %v", ErrCodeAccountDisabled, bodyDis["code"])
 	}
 }
 

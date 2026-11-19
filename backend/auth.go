@@ -23,7 +23,12 @@ type authRequest struct {
 }
 
 type authResponse struct {
-	Token string `json:"token"`
+	Token              string `json:"token"`
+	Role               string `json:"role,omitempty"`
+	TenantID           string `json:"tenant_id,omitempty"`
+	TenantSlug         string `json:"tenant_slug,omitempty"`
+	MustChangePassword bool   `json:"must_change_password,omitempty"`
+	RedirectURL        string `json:"redirect_url,omitempty"`
 }
 
 type companyRegisterRequest struct {
@@ -161,7 +166,88 @@ func loginHandler(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to create token")
 	}
 	recordAuditLog(user.ID, user.Role, user.TenantID, "login_success", "auth", user.ID, c.IP())
-	return c.JSON(authResponse{Token: tok})
+	redirectURL := fmt.Sprintf("/t/%s/admin/dashboard", tenant.Slug)
+	return c.JSON(authResponse{
+		Token:              tok,
+		Role:               user.Role,
+		TenantID:           tenant.Slug,
+		TenantSlug:         tenant.Slug,
+		MustChangePassword: user.MustChangePassword,
+		RedirectURL:        redirectURL,
+	})
+}
+
+// globalLoginHandler authenticates any user (platform admin, tenant admin, or staff) without requiring a tenant slug in the URL.
+// It automatically determines the user's role and associated company, returning the appropriate token and target redirect URL.
+func globalLoginHandler(c *fiber.Ctx) error {
+	var req authRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+	cleanEmail := strings.ToLower(strings.TrimSpace(req.Email))
+	if !validateEmail(cleanEmail) || len(req.Password) < 6 {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid email or password")
+	}
+
+	var users []User
+	if err := db.Where("email = ?", cleanEmail).Find(&users).Error; err != nil || len(users) == 0 {
+		recordAuditLog(0, "anonymous", 0, "login_failure", "auth", 0, c.IP())
+		return fiber.NewError(fiber.StatusUnauthorized, "invalid credentials")
+	}
+
+	var matchedUser *User
+	for i := range users {
+		if checkPasswordHash(req.Password, users[i].Password) {
+			matchedUser = &users[i]
+			break
+		}
+	}
+	if matchedUser == nil {
+		recordAuditLog(0, "anonymous", 0, "login_failure", "auth", 0, c.IP())
+		return fiber.NewError(fiber.StatusUnauthorized, "invalid credentials")
+	}
+
+	if matchedUser.Status == "disabled" {
+		recordAuditLog(matchedUser.ID, matchedUser.Role, matchedUser.TenantID, "login_failure_disabled", "auth", matchedUser.ID, c.IP())
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeAccountDisabled, "account is disabled; please contact your administrator")
+	}
+
+	// Platform admin authentication
+	if matchedUser.Role == RolePlatformAdmin {
+		tok, err := createPlatformAdminToken(matchedUser.ID, matchedUser.Email)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "failed to create token")
+		}
+		recordAuditLog(matchedUser.ID, matchedUser.Role, 0, "login_success", "platform_auth", matchedUser.ID, c.IP())
+		return c.JSON(authResponse{
+			Token:              tok,
+			Role:               RolePlatformAdmin,
+			MustChangePassword: matchedUser.MustChangePassword,
+			RedirectURL:        "/platform/dashboard",
+		})
+	}
+
+	// Tenant users (tenant_admin or staff)
+	var tenant Tenant
+	if err := db.First(&tenant, matchedUser.TenantID).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "tenant not found for user")
+	}
+
+	tok, err := createTenantJWTToken(matchedUser.ID, matchedUser.Email, matchedUser.TenantID, matchedUser.Role, matchedUser.TokenVersion)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to create token")
+	}
+	recordAuditLog(matchedUser.ID, matchedUser.Role, matchedUser.TenantID, "login_success", "auth", matchedUser.ID, c.IP())
+
+	redirectURL := fmt.Sprintf("/t/%s/admin/dashboard", tenant.Slug)
+	return c.JSON(authResponse{
+		Token:              tok,
+		Role:               matchedUser.Role,
+		TenantID:           tenant.Slug,
+		TenantSlug:         tenant.Slug,
+		MustChangePassword: matchedUser.MustChangePassword,
+		RedirectURL:        redirectURL,
+	})
 }
 
 func platformLoginHandler(c *fiber.Ctx) error {
@@ -194,7 +280,11 @@ func platformLoginHandler(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to create token")
 	}
 	recordAuditLog(user.ID, user.Role, 0, "login_success", "platform_auth", user.ID, c.IP())
-	return c.JSON(authResponse{Token: tok})
+	return c.JSON(authResponse{
+		Token:       tok,
+		Role:        RolePlatformAdmin,
+		RedirectURL: "/platform/dashboard",
+	})
 }
 
 // bootstrapPlatformAdmin performs optional one-time bootstrap if zero platform admins exist
@@ -401,15 +491,20 @@ func changePasswordHandler(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "password changed successfully"})
 }
 
-// runCreatePlatformAdminCLI creates a platform admin from CLI subcommand with stdin password prompt
+// runCreatePlatformAdminCLI creates a platform admin from CLI subcommand with flag, positional, or stdin password prompt
 func runCreatePlatformAdminCLI(args []string) {
 	fs := flag.NewFlagSet("create-platform-admin", flag.ExitOnError)
 	emailFlag := fs.String("email", "", "Platform admin email address")
+	passwordFlag := fs.String("password", "", "Platform admin password (optional, prompted if omitted)")
 	_ = fs.Parse(args)
 
 	cleanEmail := strings.ToLower(strings.TrimSpace(*emailFlag))
+	if cleanEmail == "" && len(fs.Args()) > 0 {
+		cleanEmail = strings.ToLower(strings.TrimSpace(fs.Args()[0]))
+	}
+
 	if cleanEmail == "" || !validateEmail(cleanEmail) {
-		fmt.Fprintln(os.Stderr, "Error: valid --email flag is required")
+		fmt.Fprintln(os.Stderr, "Error: valid --email flag or positional email argument is required")
 		os.Exit(1)
 	}
 
@@ -420,14 +515,21 @@ func runCreatePlatformAdminCLI(args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Print("Enter platform admin password: ")
-	reader := bufio.NewReader(os.Stdin)
-	password, err := reader.ReadString('\n')
-	if err != nil && err != io.EOF {
-		fmt.Fprintf(os.Stderr, "Error reading password from stdin: %v\n", err)
-		os.Exit(1)
+	cleanPass := strings.TrimSpace(*passwordFlag)
+	if cleanPass == "" && len(fs.Args()) > 1 {
+		cleanPass = strings.TrimSpace(fs.Args()[1])
 	}
-	cleanPass := strings.TrimSpace(password)
+
+	if cleanPass == "" {
+		fmt.Print("Enter platform admin password: ")
+		reader := bufio.NewReader(os.Stdin)
+		password, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			fmt.Fprintf(os.Stderr, "Error reading password from stdin: %v\n", err)
+			os.Exit(1)
+		}
+		cleanPass = strings.TrimSpace(password)
+	}
 
 	if err := validatePasswordPolicy(cleanPass); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
