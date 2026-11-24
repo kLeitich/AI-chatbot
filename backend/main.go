@@ -76,13 +76,17 @@ func isAllowedCORSOrigin(origin string, configuredOrigins []string) bool {
 		return true
 	}
 
-	// 4. Vercel deployments (production, staging, preview branch deployments)
+	// 4. Official Booka project Vercel deployments (restrict to booka/ai-chatbot prefixes to block arbitrary *.vercel.app attacker tenants)
 	if strings.HasPrefix(origin, "https://") && strings.HasSuffix(origin, ".vercel.app") {
-		return true
+		subdomain := strings.TrimPrefix(origin, "https://")
+		subdomain = strings.TrimSuffix(subdomain, ".vercel.app")
+		if strings.HasPrefix(subdomain, "ai-chatbot") || strings.HasPrefix(subdomain, "booka") {
+			return true
+		}
 	}
 
-	// 5. Render web service preview / self origins
-	if strings.HasPrefix(origin, "https://") && strings.HasSuffix(origin, ".onrender.com") {
+	// 5. Official Booka Render web service self-origin
+	if origin == "https://ai-chatbot-1vkx.onrender.com" {
 		return true
 	}
 

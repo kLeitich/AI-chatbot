@@ -187,9 +187,11 @@ func TestIsAllowedCORSOrigin(t *testing.T) {
 		// Render service origins
 		{"https://ai-chatbot-1vkx.onrender.com", true},
 
-		// Disallowed origins
+		// Disallowed origins (including arbitrary third-party Vercel/Render apps)
 		{"https://malicious-site.com", false},
 		{"https://evil-vercel.app.attacker.com", false},
+		{"https://random-attacker.vercel.app", false},
+		{"https://malicious-user.onrender.com", false},
 		{"http://vercel.app", false},
 		{"", false},
 	}
