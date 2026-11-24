@@ -46,7 +46,7 @@ export default function UserLogin() {
       setSuccess('Login successful! Redirecting to your dashboard...')
 
       let target = redirect_url
-      if (!target) {
+      if (!target || !target.startsWith('/') || target.startsWith('//') || target.includes('://')) {
         if (role === 'platform_admin') {
           target = '/platform/dashboard'
         } else if (tenant_id) {
