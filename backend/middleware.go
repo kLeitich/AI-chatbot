@@ -24,6 +24,20 @@ func jwtMiddleware(c *fiber.Ctx) error {
 		return secret, nil
 	})
 	if err != nil || !tok.Valid {
+		// Fallback: check if valid Clerk token (RS256)
+		tenantSlug := c.Params("tenant")
+		if user, clerkErr := validateClerkToken(tokStr, tenantSlug); clerkErr == nil && user != nil {
+			if user.Status == "disabled" {
+				return sendError(c, fiber.StatusUnauthorized, ErrCodeAccountDisabled, "account is disabled; please contact support")
+			}
+			c.Locals("user_id", user.ID)
+			c.Locals("email", user.Email)
+			c.Locals("aud", "tenant_user")
+			c.Locals("role", user.Role)
+			c.Locals("tenant_id", user.TenantID)
+			c.Locals("must_change_password", user.MustChangePassword)
+			return c.Next()
+		}
 		return sendError(c, fiber.StatusUnauthorized, ErrCodeTokenExpired, "invalid or expired token")
 	}
 

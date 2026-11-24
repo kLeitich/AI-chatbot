@@ -231,6 +231,10 @@ func main() {
 	app.Post("/auth/change-password", jwtMiddleware, changePasswordHandler)
 	app.Post("/auth/forgot-password", passwordResetLimiter, forgotPasswordHandler)
 	app.Post("/auth/reset-password", passwordResetLimiter, resetPasswordHandler)
+	app.Post("/auth/clerk/sync", authLimiter, clerkSyncHandler)
+
+	// Webhooks
+	app.Post("/webhooks/chatwoot", chatwootWebhookHandler)
 
 	// Platform admin endpoints (strictly read-only views)
 	platform := app.Group("/platform", jwtMiddleware, platformAdminMiddleware)
@@ -251,6 +255,8 @@ func main() {
 	tenant.Get("/doctors", listDoctors)
 	tenant.Get("/reasons", listReasons)
 	tenant.Get("/availability", getAvailability)
+	tenant.Post("/webhooks/chatwoot", chatwootWebhookHandler)
+	tenant.Post("/auth/clerk/sync", authLimiter, clerkSyncHandler)
 
 	// Admin and staff endpoints with granular permissions
 	admin := tenant.Group("/admin", jwtMiddleware, tenantUserMiddleware)
