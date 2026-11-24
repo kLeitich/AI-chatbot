@@ -1,6 +1,7 @@
 "use client"
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import api from '../lib/api'
 
 export default function AdminLogin({ tenant = 'default' }) {
@@ -47,6 +48,11 @@ export default function AdminLogin({ tenant = 'default' }) {
         {notice && <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded p-2 text-xs font-medium">{notice}</p>}
         <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="Email" className="w-full border rounded p-2" />
         <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="Password" className="w-full border rounded p-2" />
+        <div className="text-right">
+          <Link href="/forgot-password" className="text-xs text-blue-600 hover:underline">
+            Forgot password?
+          </Link>
+        </div>
         {error && <p className="text-red-600 text-sm">{error}</p>}
         {success && <p className="text-green-600 text-sm">{success}</p>}
         <button className="w-full bg-blue-600 text-white rounded p-2" disabled={loading}>{loading ? 'Signing in...' : 'Sign In'}</button>
