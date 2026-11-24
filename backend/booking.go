@@ -212,6 +212,13 @@ func availableTimeSlots(tenantID uint, date string, doctorName string) ([]string
 		taken[ap.Time] = true
 	}
 
+	// Query Google Calendar for doctor busy slots (two-way sync)
+	if gcalBusy, _ := fetchGoogleCalendarBusySlots(tenantID, doc.Name, date); len(gcalBusy) > 0 {
+		for _, bTime := range gcalBusy {
+			taken[bTime] = true
+		}
+	}
+
 	now := nowInAppLocation()
 	todayStr := now.Format("2006-01-02")
 	nowHHMM := now.Format("15:04")
