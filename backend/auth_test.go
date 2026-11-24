@@ -240,6 +240,34 @@ func TestRoleInjectionPrevented(t *testing.T) {
 	if createdUser.Role != RoleStaff {
 		t.Fatalf("Expected RoleStaff, got %q", createdUser.Role)
 	}
+
+	// 4. Registration rejects weak password violating policy
+	bodyWeak := map[string]string{
+		"company_name":   "WeakPass Clinic",
+		"admin_email":    "weak@clinic.com",
+		"admin_password": "short",
+	}
+	bWeak, _ := json.Marshal(bodyWeak)
+	reqWeak := httptest.NewRequest("POST", "/auth/register", bytes.NewReader(bWeak))
+	reqWeak.Header.Set("Content-Type", "application/json")
+	respWeak, _ := app.Test(reqWeak, 10000)
+	if respWeak.StatusCode != http.StatusBadRequest {
+		t.Fatalf("Expected 400 Bad Request for weak registration password, got: %d", respWeak.StatusCode)
+	}
+
+	// 5. Registration rejects reserved company slugs
+	bodyReserved := map[string]string{
+		"company_name":   "Platform",
+		"admin_email":    "reserved@platform.com",
+		"admin_password": "ValidPassword123!",
+	}
+	bReserved, _ := json.Marshal(bodyReserved)
+	reqReserved := httptest.NewRequest("POST", "/auth/register", bytes.NewReader(bReserved))
+	reqReserved.Header.Set("Content-Type", "application/json")
+	respReserved, _ := app.Test(reqReserved, 10000)
+	if respReserved.StatusCode != http.StatusBadRequest {
+		t.Fatalf("Expected 400 Bad Request for reserved company slug, got: %d", respReserved.StatusCode)
+	}
 }
 
 func TestTokenBoundariesAndRevocation(t *testing.T) {

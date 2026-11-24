@@ -371,14 +371,29 @@ func companyRegisterHandler(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
 	}
 
-	if !validateEmail(req.AdminEmail) || len(req.AdminPassword) < 6 {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid email or password (min 6 chars)")
+	if !validateEmail(req.AdminEmail) {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid email address")
 	}
-	if len(req.CompanyName) < 2 {
+	if err := validatePasswordPolicy(req.AdminPassword); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	if len(strings.TrimSpace(req.CompanyName)) < 2 {
 		return fiber.NewError(fiber.StatusBadRequest, "company name must be at least 2 characters")
 	}
 
 	tenantSlug := generateTenantSlug(req.CompanyName)
+	if len(tenantSlug) < 2 {
+		return fiber.NewError(fiber.StatusBadRequest, "company name must contain at least 2 alphanumeric characters")
+	}
+
+	reservedSlugs := map[string]bool{
+		"platform": true, "admin": true, "auth": true, "api": true, "root": true,
+		"system": true, "default": true, "login": true, "register": true, "settings": true,
+		"dashboard": true, "health": true, "embed": true, "book": true,
+	}
+	if reservedSlugs[tenantSlug] {
+		return fiber.NewError(fiber.StatusBadRequest, "company name is reserved")
+	}
 
 	var existingTenant Tenant
 	if err := db.Where("slug = ?", tenantSlug).First(&existingTenant).Error; err == nil {
