@@ -2,12 +2,16 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net/mail"
+	"net/smtp"
 	"os"
 	"strings"
 	"time"
@@ -504,6 +508,167 @@ func changePasswordHandler(c *fiber.Ctx) error {
 	recordAuditLog(user.ID, user.Role, user.TenantID, "change_password", "user", user.ID, c.IP())
 
 	return c.JSON(fiber.Map{"message": "password changed successfully"})
+}
+
+type forgotPasswordRequest struct {
+	Email string `json:"email"`
+}
+
+type resetPasswordRequest struct {
+	Token       string `json:"token"`
+	NewPassword string `json:"new_password"`
+}
+
+func hashResetToken(rawToken string) string {
+	sum := sha256.Sum256([]byte(rawToken))
+	return hex.EncodeToString(sum[:])
+}
+
+// sendPasswordResetEmail sends the reset link via configured SMTP or logs safely
+func sendPasswordResetEmail(recipientEmail, resetLink string) error {
+	smtpHost := os.Getenv("SMTP_HOST")
+	smtpPort := getEnv("SMTP_PORT", "587")
+	smtpUser := os.Getenv("SMTP_USER")
+	smtpPass := os.Getenv("SMTP_PASS")
+	smtpFrom := getEnv("SMTP_FROM", smtpUser)
+
+	if smtpHost != "" && smtpUser != "" && smtpPass != "" {
+		auth := smtp.PlainAuth("", smtpUser, smtpPass, smtpHost)
+		subject := "Subject: Reset your Booka password\r\n"
+		mime := "MIME-version: 1.0;\nContent-Type: text/html; charset=\"UTF-8\";\r\n\r\n"
+		body := fmt.Sprintf(`<html><body>
+			<h2>Booka Password Reset</h2>
+			<p>We received a request to reset your password. Click the link below to set a new password:</p>
+			<p><a href="%s" style="padding: 10px 18px; background-color: #2563eb; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: bold;">Reset Password</a></p>
+			<p>Or copy and paste this link in your browser:</p>
+			<p><a href="%s">%s</a></p>
+			<p>This link expires in 1 hour. If you did not request this, you can safely ignore this email.</p>
+		</body></html>`, resetLink, resetLink, resetLink)
+		msg := []byte(subject + mime + body)
+		addr := fmt.Sprintf("%s:%s", smtpHost, smtpPort)
+		if err := smtp.SendMail(addr, auth, smtpFrom, []string{recipientEmail}, msg); err != nil {
+			log.Printf("[EMAIL ERROR] Failed to send password reset email to %s: %v", recipientEmail, err)
+			return err
+		}
+		log.Printf("[EMAIL] Password reset email successfully dispatched to %s", recipientEmail)
+		return nil
+	}
+
+	// Development / Fallback mode: log safely to server logs
+	log.Printf("[AUTH] Password reset requested for '%s'. Reset link: %s", recipientEmail, resetLink)
+	return nil
+}
+
+func forgotPasswordHandler(c *fiber.Ctx) error {
+	var req forgotPasswordRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+
+	cleanEmail := strings.ToLower(strings.TrimSpace(req.Email))
+	if cleanEmail == "" || !validateEmail(cleanEmail) {
+		return fiber.NewError(fiber.StatusBadRequest, "valid email address is required")
+	}
+
+	genericSuccess := fiber.Map{
+		"message": "If an account exists with this email address, a password reset link has been sent.",
+	}
+
+	var user User
+	if err := db.Where("email = ?", cleanEmail).First(&user).Error; err != nil {
+		return c.JSON(genericSuccess)
+	}
+
+	if user.Status == "disabled" {
+		return c.JSON(genericSuccess)
+	}
+
+	tokenBytes := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, tokenBytes); err != nil {
+		log.Printf("[AUTH ERROR] Failed to generate reset token: %v", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to generate security token")
+	}
+	rawToken := hex.EncodeToString(tokenBytes)
+	tokenHash := hashResetToken(rawToken)
+
+	// Invalidate any previous unused reset tokens for this user
+	db.Model(&PasswordResetToken{}).Where("user_id = ? AND used = ?", user.ID, false).Update("used", true)
+
+	resetRecord := PasswordResetToken{
+		UserID:    user.ID,
+		Email:     user.Email,
+		TokenHash: tokenHash,
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+		Used:      false,
+	}
+	if err := db.Create(&resetRecord).Error; err != nil {
+		log.Printf("[AUTH ERROR] Failed to store password reset token: %v", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to process request")
+	}
+
+	frontendBase := getEnv("FRONTEND_URL", "https://www.booka.co.ke")
+	if strings.Contains(frontendBase, ",") {
+		frontendBase = strings.TrimSpace(strings.Split(frontendBase, ",")[0])
+	}
+	frontendBase = strings.TrimRight(frontendBase, "/")
+	resetLink := fmt.Sprintf("%s/reset-password?token=%s", frontendBase, rawToken)
+
+	_ = sendPasswordResetEmail(user.Email, resetLink)
+
+	return c.JSON(genericSuccess)
+}
+
+func resetPasswordHandler(c *fiber.Ctx) error {
+	var req resetPasswordRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+
+	rawToken := strings.TrimSpace(req.Token)
+	if rawToken == "" || len(rawToken) < 32 {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid or missing reset token")
+	}
+
+	if err := validatePasswordPolicy(req.NewPassword); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+
+	tokenHash := hashResetToken(rawToken)
+
+	var resetRecord PasswordResetToken
+	if err := db.Where("token_hash = ? AND used = ? AND expires_at > ?", tokenHash, false, time.Now()).First(&resetRecord).Error; err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "password reset link is invalid or has expired")
+	}
+
+	var user User
+	if err := db.First(&user, resetRecord.UserID).Error; err != nil {
+		return fiber.NewError(fiber.StatusNotFound, "user not found")
+	}
+
+	if user.Status == "disabled" {
+		return fiber.NewError(fiber.StatusForbidden, "account is disabled; please contact support")
+	}
+
+	hashedPassword, err := hashPassword(req.NewPassword)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to process password")
+	}
+
+	user.Password = hashedPassword
+	user.MustChangePassword = false
+	user.TokenVersion++
+	if err := db.Save(&user).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to update password")
+	}
+
+	resetRecord.Used = true
+	db.Save(&resetRecord)
+
+	recordAuditLog(user.ID, user.Role, user.TenantID, "reset_password", "user", user.ID, c.IP())
+
+	return c.JSON(fiber.Map{
+		"message": "password reset successfully. You can now sign in with your new password.",
+	})
 }
 
 // runCreatePlatformAdminCLI creates a platform admin from CLI subcommand with flag, positional, or stdin password prompt

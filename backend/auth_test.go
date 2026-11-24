@@ -30,6 +30,8 @@ func setupAuthTestApp(t *testing.T) (*fiber.App, uint, string) {
 	app.Post("/auth/platform/login", platformLoginHandler)
 	app.Post("/platform/login", platformLoginHandler)
 	app.Post("/auth/change-password", jwtMiddleware, changePasswordHandler)
+	app.Post("/auth/forgot-password", forgotPasswordHandler)
+	app.Post("/auth/reset-password", resetPasswordHandler)
 
 	platform := app.Group("/platform", jwtMiddleware, platformAdminMiddleware)
 	platform.Get("/companies", listCompanies)
@@ -642,6 +644,167 @@ func TestGlobalLogin(t *testing.T) {
 	json.NewDecoder(respDis.Body).Decode(&bodyDis)
 	if bodyDis["code"] != ErrCodeAccountDisabled {
 		t.Errorf("Expected code=%s for disabled account, got %v", ErrCodeAccountDisabled, bodyDis["code"])
+	}
+}
+
+func TestForgotPasswordAndResetFlow(t *testing.T) {
+	app, tenantID, _ := setupAuthTestApp(t)
+
+	// 1. Seed user
+	initialPass, _ := hashPassword("InitialPass12345!")
+	testUser := User{
+		TenantID:     tenantID,
+		Email:        "resetme@clinic.internal",
+		Password:     initialPass,
+		Role:         RoleStaff,
+		Status:       "active",
+		TokenVersion: 1,
+	}
+	if err := db.Create(&testUser).Error; err != nil {
+		t.Fatalf("Failed to seed test user: %v", err)
+	}
+
+	// 2. Old login works and produces valid token
+	loginBody, _ := json.Marshal(map[string]string{
+		"email":    "resetme@clinic.internal",
+		"password": "InitialPass12345!",
+	})
+	reqLog := httptest.NewRequest("POST", "/auth/login", bytes.NewReader(loginBody))
+	reqLog.Header.Set("Content-Type", "application/json")
+	respLog, _ := app.Test(reqLog, 10000)
+	if respLog.StatusCode != http.StatusOK {
+		t.Fatalf("Initial login failed: status %d", respLog.StatusCode)
+	}
+	var loginData map[string]interface{}
+	json.NewDecoder(respLog.Body).Decode(&loginData)
+	oldToken := loginData["token"].(string)
+
+	// 3. Test Invalid Email format -> 400
+	badEmailBody, _ := json.Marshal(map[string]string{"email": "not-an-email"})
+	reqBadEmail := httptest.NewRequest("POST", "/auth/forgot-password", bytes.NewReader(badEmailBody))
+	reqBadEmail.Header.Set("Content-Type", "application/json")
+	respBadEmail, _ := app.Test(reqBadEmail, 10000)
+	if respBadEmail.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected 400 for bad email, got %d", respBadEmail.StatusCode)
+	}
+
+	// 4. Test Non-existent Email -> 200 (prevents enumeration)
+	ghostEmailBody, _ := json.Marshal(map[string]string{"email": "ghost@clinic.internal"})
+	reqGhost := httptest.NewRequest("POST", "/auth/forgot-password", bytes.NewReader(ghostEmailBody))
+	reqGhost.Header.Set("Content-Type", "application/json")
+	respGhost, _ := app.Test(reqGhost, 10000)
+	if respGhost.StatusCode != http.StatusOK {
+		t.Errorf("Expected 200 generic message for non-existent email, got %d", respGhost.StatusCode)
+	}
+
+	// 5. Test Valid Forgot Password Request -> 200
+	validForgotBody, _ := json.Marshal(map[string]string{"email": "resetme@clinic.internal"})
+	reqForgot := httptest.NewRequest("POST", "/auth/forgot-password", bytes.NewReader(validForgotBody))
+	reqForgot.Header.Set("Content-Type", "application/json")
+	respForgot, _ := app.Test(reqForgot, 10000)
+	if respForgot.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 for valid forgot password request, got %d", respForgot.StatusCode)
+	}
+
+	// Verify reset record created in database
+	var resetRecord PasswordResetToken
+	if err := db.Where("user_id = ? AND used = ?", testUser.ID, false).First(&resetRecord).Error; err != nil {
+		t.Fatalf("Password reset token record not found in DB: %v", err)
+	}
+	if resetRecord.ExpiresAt.Before(time.Now()) {
+		t.Errorf("Token expires_at should be in the future")
+	}
+
+	// 6. Test Reset with known raw token
+	rawTestToken := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	hashedTestToken := hashResetToken(rawTestToken)
+	customReset := PasswordResetToken{
+		UserID:    testUser.ID,
+		Email:     testUser.Email,
+		TokenHash: hashedTestToken,
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+		Used:      false,
+	}
+	db.Create(&customReset)
+
+	// Attempt reset with invalid/too-short token -> 400
+	shortTokBody, _ := json.Marshal(map[string]string{
+		"token":        "short",
+		"new_password": "NewStrongPassword123!",
+	})
+	reqShortTok := httptest.NewRequest("POST", "/auth/reset-password", bytes.NewReader(shortTokBody))
+	reqShortTok.Header.Set("Content-Type", "application/json")
+	respShortTok, _ := app.Test(reqShortTok, 10000)
+	if respShortTok.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected 400 for short token, got %d", respShortTok.StatusCode)
+	}
+
+	// Attempt reset with weak password violating policy -> 400
+	weakPassBody, _ := json.Marshal(map[string]string{
+		"token":        rawTestToken,
+		"new_password": "123",
+	})
+	reqWeakPass := httptest.NewRequest("POST", "/auth/reset-password", bytes.NewReader(weakPassBody))
+	reqWeakPass.Header.Set("Content-Type", "application/json")
+	respWeakPass, _ := app.Test(reqWeakPass, 10000)
+	if respWeakPass.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected 400 for weak password, got %d", respWeakPass.StatusCode)
+	}
+
+	// Valid Reset Request -> 200
+	validResetBody, _ := json.Marshal(map[string]string{
+		"token":        rawTestToken,
+		"new_password": "BrandNewStrongPassword123!",
+	})
+	reqReset := httptest.NewRequest("POST", "/auth/reset-password", bytes.NewReader(validResetBody))
+	reqReset.Header.Set("Content-Type", "application/json")
+	respReset, _ := app.Test(reqReset, 10000)
+	if respReset.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 for valid reset request, got %d", respReset.StatusCode)
+	}
+
+	// Verify token is now marked as used
+	var updatedReset PasswordResetToken
+	db.First(&updatedReset, customReset.ID)
+	if !updatedReset.Used {
+		t.Errorf("Expected reset token to be marked used")
+	}
+
+	// Attempting to re-use the token must fail -> 400
+	reqReuse := httptest.NewRequest("POST", "/auth/reset-password", bytes.NewReader(validResetBody))
+	reqReuse.Header.Set("Content-Type", "application/json")
+	respReuse, _ := app.Test(reqReuse, 10000)
+	if respReuse.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected 400 for re-used token, got %d", respReuse.StatusCode)
+	}
+
+	// 7. Verify Old Password no longer works
+	reqOldPass := httptest.NewRequest("POST", "/auth/login", bytes.NewReader(loginBody))
+	reqOldPass.Header.Set("Content-Type", "application/json")
+	respOldPass, _ := app.Test(reqOldPass, 10000)
+	if respOldPass.StatusCode != http.StatusUnauthorized {
+		t.Errorf("Old password should no longer work, got %d", respOldPass.StatusCode)
+	}
+
+	// 8. Verify New Password works
+	newLoginBody, _ := json.Marshal(map[string]string{
+		"email":    "resetme@clinic.internal",
+		"password": "BrandNewStrongPassword123!",
+	})
+	reqNewPass := httptest.NewRequest("POST", "/auth/login", bytes.NewReader(newLoginBody))
+	reqNewPass.Header.Set("Content-Type", "application/json")
+	respNewPass, _ := app.Test(reqNewPass, 10000)
+	if respNewPass.StatusCode != http.StatusOK {
+		t.Fatalf("Login with new password failed, got %d", respNewPass.StatusCode)
+	}
+
+	// 9. Verify Old Token is revoked (token_version was bumped)
+	reqMe := httptest.NewRequest("POST", "/auth/change-password", bytes.NewReader([]byte("{}")))
+	reqMe.Header.Set("Authorization", "Bearer "+oldToken)
+	reqMe.Header.Set("Content-Type", "application/json")
+	respMe, _ := app.Test(reqMe, 10000)
+	if respMe.StatusCode != http.StatusUnauthorized {
+		t.Errorf("Old JWT token should be rejected (revoked), got status %d", respMe.StatusCode)
 	}
 }
 

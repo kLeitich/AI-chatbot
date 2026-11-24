@@ -128,6 +128,16 @@ type ReasonOption struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type PasswordResetToken struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	UserID    uint      `gorm:"index;not null" json:"user_id"`
+	Email     string    `gorm:"index;size:255;not null" json:"email"`
+	TokenHash string    `gorm:"uniqueIndex;size:64;not null" json:"token_hash"`
+	ExpiresAt time.Time `gorm:"index;not null" json:"expires_at"`
+	Used      bool      `gorm:"default:false" json:"used"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type ChatContext struct {
 	DoctorID *uint   `json:"doctor_id"`
 	ReasonID *uint   `json:"reason_id"`

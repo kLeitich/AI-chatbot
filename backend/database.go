@@ -180,7 +180,7 @@ func initDatabase(dbPath string, appEnv string) uint {
 		}
 	}
 
-	if err := db.AutoMigrate(&Tenant{}, &User{}, &Doctor{}, &ReasonOption{}, &Appointment{}, &AuditLog{}, &UserPermission{}); err != nil {
+	if err := db.AutoMigrate(&Tenant{}, &User{}, &Doctor{}, &ReasonOption{}, &Appointment{}, &AuditLog{}, &UserPermission{}, &PasswordResetToken{}); err != nil {
 		log.Fatalf("failed to migrate database: %v", err)
 	}
 

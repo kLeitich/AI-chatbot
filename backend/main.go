@@ -184,6 +184,17 @@ func main() {
 		},
 	})
 
+	passwordResetLimiter := limiter.New(limiter.Config{
+		Max:        5,
+		Expiration: 15 * time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP()
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return fiber.NewError(fiber.StatusTooManyRequests, "Too many password reset requests. Please wait 15 minutes.")
+		},
+	})
+
 	// CORS Configuration: support comma-separated origins, localhost, *.booka.co.ke, and *.vercel.app
 	rawFrontendURL := getEnv("FRONTEND_URL", "http://localhost:3000")
 	rawAllowedOrigins := getEnv("ALLOWED_ORIGINS", "")
@@ -218,6 +229,8 @@ func main() {
 	app.Post("/auth/platform/login", platformLoginLimiter, platformLoginHandler)
 	app.Post("/platform/login", platformLoginLimiter, platformLoginHandler)
 	app.Post("/auth/change-password", jwtMiddleware, changePasswordHandler)
+	app.Post("/auth/forgot-password", passwordResetLimiter, forgotPasswordHandler)
+	app.Post("/auth/reset-password", passwordResetLimiter, resetPasswordHandler)
 
 	// Platform admin endpoints (strictly read-only views)
 	platform := app.Group("/platform", jwtMiddleware, platformAdminMiddleware)
