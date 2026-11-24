@@ -10,6 +10,7 @@ import TeamManagement from './TeamManagement'
 import ClinicSetup from './ClinicSetup'
 import AuditLogTable from './AuditLogTable'
 import ShareAndEmbed from './ShareAndEmbed'
+import IntegrationsSettings from './IntegrationsSettings'
 import AppointmentListView from './AppointmentListView'
 import DoctorManagement from './DoctorManagement'
 
@@ -481,24 +482,45 @@ export default function AdminDashboard({ tenant = 'default' }) {
               )}
 
               {canManageSettings ? (
-                <button
-                  type="button"
-                  className={`px-3 py-1 text-sm font-medium ${view === 'share' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`}
-                  onClick={() => setView('share')}
-                >
-                  Share &amp; Embed
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className={`px-3 py-1 text-sm font-medium ${view === 'share' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`}
+                    onClick={() => setView('share')}
+                  >
+                    Share &amp; Embed
+                  </button>
+                  <button
+                    type="button"
+                    className={`px-3 py-1 text-sm font-medium ${view === 'integrations' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`}
+                    onClick={() => setView('integrations')}
+                  >
+                    Integrations
+                  </button>
+                </>
               ) : (
-                <button
-                  type="button"
-                  disabled
-                  title="Requires settings.manage permission"
-                  aria-label="Share & Embed (Locked - Requires settings.manage permission)"
-                  data-testid="tab-share-locked"
-                  className="px-3 py-1 text-sm font-medium bg-slate-100 text-slate-400 cursor-not-allowed inline-flex items-center gap-1 opacity-75"
-                >
-                  Share &amp; Embed 🔒
-                </button>
+                <>
+                  <button
+                    type="button"
+                    disabled
+                    title="Requires settings.manage permission"
+                    aria-label="Share & Embed (Locked - Requires settings.manage permission)"
+                    data-testid="tab-share-locked"
+                    className="px-3 py-1 text-sm font-medium bg-slate-100 text-slate-400 cursor-not-allowed inline-flex items-center gap-1 opacity-75"
+                  >
+                    Share &amp; Embed 🔒
+                  </button>
+                  <button
+                    type="button"
+                    disabled
+                    title="Requires settings.manage permission"
+                    aria-label="Integrations (Locked - Requires settings.manage permission)"
+                    data-testid="tab-integrations-locked"
+                    className="px-3 py-1 text-sm font-medium bg-slate-100 text-slate-400 cursor-not-allowed inline-flex items-center gap-1 opacity-75"
+                  >
+                    Integrations 🔒
+                  </button>
+                </>
               )}
 
               {isTenantAdmin ? (
@@ -613,6 +635,8 @@ export default function AdminDashboard({ tenant = 'default' }) {
           <ClinicSetup tenant={tenant} includeDoctors={false} />
         ) : view === 'share' ? (
           <ShareAndEmbed tenant={tenant} />
+        ) : view === 'integrations' ? (
+          <IntegrationsSettings tenant={tenant} />
         ) : view === 'audit' ? (
           <AuditLogTable tenant={tenant} />
         ) : (

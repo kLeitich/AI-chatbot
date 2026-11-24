@@ -209,6 +209,13 @@ func chatHandler(c *fiber.Ctx) error {
 			// Clear conversation state on successful booking
 			conv = ConversationState{}
 			setConversation(convKey, conv)
+
+			if tenant.GoogleCalendarEnabled {
+				go func() {
+					_ = syncAppointmentToGoogleCalendar(tenant, &finalApp)
+				}()
+			}
+
 			return c.JSON(ChatResponse{Message: reply, Appointment: &finalApp, SessionID: sessionID})
 		}
 
@@ -387,6 +394,15 @@ func createAppointment(c *fiber.Ctx) error {
 			"alternatives": alts,
 		})
 	}
+	if in.TenantID > 0 {
+		var tenant Tenant
+		if err := db.First(&tenant, in.TenantID).Error; err == nil && tenant.GoogleCalendarEnabled {
+			go func() {
+				_ = syncAppointmentToGoogleCalendar(tenant, &in)
+			}()
+		}
+	}
+
 	return c.Status(fiber.StatusCreated).JSON(in)
 }
 
@@ -469,6 +485,16 @@ func updateAppointment(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusInternalServerError, "failed to update")
 		}
 	}
+
+	if ap.Status == StatusCancelled && ap.GoogleEventID != "" {
+		var tenant Tenant
+		if err := db.First(&tenant, tenantID).Error; err == nil {
+			go func(eID string) {
+				_ = deleteGoogleCalendarEvent(tenant, eID, "")
+			}(ap.GoogleEventID)
+		}
+	}
+
 	return c.JSON(ap)
 }
 
@@ -479,7 +505,21 @@ func deleteAppointment(c *fiber.Ctx) error {
 	}
 
 	id := c.Params("id")
-	if err := db.Where("id = ? AND tenant_id = ?", id, tenantID).Delete(&Appointment{}).Error; err != nil {
+	var ap Appointment
+	if err := db.Where("id = ? AND tenant_id = ?", id, tenantID).First(&ap).Error; err != nil {
+		return fiber.NewError(fiber.StatusNotFound, "appointment not found")
+	}
+
+	if ap.GoogleEventID != "" {
+		var tenant Tenant
+		if tErr := db.First(&tenant, tenantID).Error; tErr == nil {
+			go func(eID string) {
+				_ = deleteGoogleCalendarEvent(tenant, eID, "")
+			}(ap.GoogleEventID)
+		}
+	}
+
+	if err := db.Delete(&ap).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to delete")
 	}
 	return c.SendStatus(fiber.StatusNoContent)
@@ -862,6 +902,26 @@ type TenantSettingsRequest struct {
 	BookingLinkEnabled  *bool     `json:"booking_link_enabled"`
 	AllowedEmbedOrigins *[]string `json:"allowed_embed_origins"`
 	PrivacyURL          *string   `json:"privacy_url"`
+
+	// Chatwoot & WhatsApp
+	ChatwootEnabled       *bool   `json:"chatwoot_enabled"`
+	ChatwootBaseURL       *string `json:"chatwoot_base_url"`
+	ChatwootAPIToken      *string `json:"chatwoot_api_token"`
+	ChatwootAccountID     *int    `json:"chatwoot_account_id"`
+	ChatwootInboxID       *int    `json:"chatwoot_inbox_id"`
+	ChatwootWebhookSecret *string `json:"chatwoot_webhook_secret"`
+
+	// Google Calendar
+	GoogleCalendarEnabled *bool   `json:"google_calendar_enabled"`
+	GoogleCalendarID      *string `json:"google_calendar_id"`
+	GoogleCalendarToken   *string `json:"google_calendar_token"`
+	GoogleClientID        *string `json:"google_client_id"`
+	GoogleClientSecret    *string `json:"google_client_secret"`
+
+	// Clerk SSO
+	ClerkEnabled        *bool   `json:"clerk_enabled"`
+	ClerkPublishableKey *string `json:"clerk_publishable_key"`
+	ClerkSecretKey      *string `json:"clerk_secret_key"`
 }
 
 type TenantSettingsResponse struct {
@@ -870,6 +930,26 @@ type TenantSettingsResponse struct {
 	BookingLinkEnabled  bool     `json:"booking_link_enabled"`
 	AllowedEmbedOrigins []string `json:"allowed_embed_origins"`
 	PrivacyURL          string   `json:"privacy_url,omitempty"`
+
+	// Chatwoot & WhatsApp
+	ChatwootEnabled       bool   `json:"chatwoot_enabled"`
+	ChatwootBaseURL       string `json:"chatwoot_base_url,omitempty"`
+	ChatwootAPIToken      string `json:"chatwoot_api_token,omitempty"`
+	ChatwootAccountID     int    `json:"chatwoot_account_id,omitempty"`
+	ChatwootInboxID       int    `json:"chatwoot_inbox_id,omitempty"`
+	ChatwootWebhookSecret string `json:"chatwoot_webhook_secret,omitempty"`
+
+	// Google Calendar
+	GoogleCalendarEnabled bool   `json:"google_calendar_enabled"`
+	GoogleCalendarID      string `json:"google_calendar_id,omitempty"`
+	GoogleCalendarToken   string `json:"google_calendar_token,omitempty"`
+	GoogleClientID        string `json:"google_client_id,omitempty"`
+	GoogleClientSecret    string `json:"google_client_secret,omitempty"`
+
+	// Clerk SSO
+	ClerkEnabled        bool   `json:"clerk_enabled"`
+	ClerkPublishableKey string `json:"clerk_publishable_key,omitempty"`
+	ClerkSecretKey      string `json:"clerk_secret_key,omitempty"`
 }
 
 type TenantPublicConfigResponse struct {
@@ -879,6 +959,11 @@ type TenantPublicConfigResponse struct {
 	EmergencyNumber     string   `json:"emergency_number"`
 	PrivacyURL          string   `json:"privacy_url"`
 	AllowedEmbedOrigins []string `json:"allowed_embed_origins"`
+	ChatwootEnabled     bool     `json:"chatwoot_enabled"`
+	ChatwootBaseURL     string   `json:"chatwoot_base_url,omitempty"`
+	ChatwootInboxID     int      `json:"chatwoot_inbox_id,omitempty"`
+	ClerkEnabled        bool     `json:"clerk_enabled"`
+	ClerkPublishableKey string   `json:"clerk_publishable_key,omitempty"`
 }
 
 var emergencyNumberRegex = regexp.MustCompile(`^[0-9+ ]{0,20}$`)
@@ -1011,6 +1096,23 @@ func getTenantSettingsHandler(c *fiber.Ctx) error {
 		BookingLinkEnabled:  tenant.BookingLinkEnabled,
 		AllowedEmbedOrigins: tenant.GetAllowedEmbedOrigins(),
 		PrivacyURL:          tenant.PrivacyURL,
+
+		ChatwootEnabled:       tenant.ChatwootEnabled,
+		ChatwootBaseURL:       tenant.ChatwootBaseURL,
+		ChatwootAPIToken:      tenant.ChatwootAPIToken,
+		ChatwootAccountID:     tenant.ChatwootAccountID,
+		ChatwootInboxID:       tenant.ChatwootInboxID,
+		ChatwootWebhookSecret: tenant.ChatwootWebhookSecret,
+
+		GoogleCalendarEnabled: tenant.GoogleCalendarEnabled,
+		GoogleCalendarID:      tenant.GoogleCalendarID,
+		GoogleCalendarToken:   tenant.GoogleCalendarToken,
+		GoogleClientID:        tenant.GoogleClientID,
+		GoogleClientSecret:    tenant.GoogleClientSecret,
+
+		ClerkEnabled:        tenant.ClerkEnabled,
+		ClerkPublishableKey: tenant.ClerkPublishableKey,
+		ClerkSecretKey:      tenant.ClerkSecretKey,
 	})
 }
 
@@ -1087,6 +1189,54 @@ func updateTenantSettingsHandler(c *fiber.Ctx) error {
 		tenant.SetAllowedEmbedOrigins(deduped)
 	}
 
+	// Chatwoot & WhatsApp settings
+	if req.ChatwootEnabled != nil {
+		tenant.ChatwootEnabled = *req.ChatwootEnabled
+	}
+	if req.ChatwootBaseURL != nil {
+		tenant.ChatwootBaseURL = strings.TrimSpace(*req.ChatwootBaseURL)
+	}
+	if req.ChatwootAPIToken != nil {
+		tenant.ChatwootAPIToken = strings.TrimSpace(*req.ChatwootAPIToken)
+	}
+	if req.ChatwootAccountID != nil {
+		tenant.ChatwootAccountID = *req.ChatwootAccountID
+	}
+	if req.ChatwootInboxID != nil {
+		tenant.ChatwootInboxID = *req.ChatwootInboxID
+	}
+	if req.ChatwootWebhookSecret != nil {
+		tenant.ChatwootWebhookSecret = strings.TrimSpace(*req.ChatwootWebhookSecret)
+	}
+
+	// Google Calendar settings
+	if req.GoogleCalendarEnabled != nil {
+		tenant.GoogleCalendarEnabled = *req.GoogleCalendarEnabled
+	}
+	if req.GoogleCalendarID != nil {
+		tenant.GoogleCalendarID = strings.TrimSpace(*req.GoogleCalendarID)
+	}
+	if req.GoogleCalendarToken != nil {
+		tenant.GoogleCalendarToken = strings.TrimSpace(*req.GoogleCalendarToken)
+	}
+	if req.GoogleClientID != nil {
+		tenant.GoogleClientID = strings.TrimSpace(*req.GoogleClientID)
+	}
+	if req.GoogleClientSecret != nil {
+		tenant.GoogleClientSecret = strings.TrimSpace(*req.GoogleClientSecret)
+	}
+
+	// Clerk SSO settings
+	if req.ClerkEnabled != nil {
+		tenant.ClerkEnabled = *req.ClerkEnabled
+	}
+	if req.ClerkPublishableKey != nil {
+		tenant.ClerkPublishableKey = strings.TrimSpace(*req.ClerkPublishableKey)
+	}
+	if req.ClerkSecretKey != nil {
+		tenant.ClerkSecretKey = strings.TrimSpace(*req.ClerkSecretKey)
+	}
+
 	if err := db.Save(&tenant).Error; err != nil {
 		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "failed to update settings")
 	}
@@ -1101,6 +1251,23 @@ func updateTenantSettingsHandler(c *fiber.Ctx) error {
 		BookingLinkEnabled:  tenant.BookingLinkEnabled,
 		AllowedEmbedOrigins: tenant.GetAllowedEmbedOrigins(),
 		PrivacyURL:          tenant.PrivacyURL,
+
+		ChatwootEnabled:       tenant.ChatwootEnabled,
+		ChatwootBaseURL:       tenant.ChatwootBaseURL,
+		ChatwootAPIToken:      tenant.ChatwootAPIToken,
+		ChatwootAccountID:     tenant.ChatwootAccountID,
+		ChatwootInboxID:       tenant.ChatwootInboxID,
+		ChatwootWebhookSecret: tenant.ChatwootWebhookSecret,
+
+		GoogleCalendarEnabled: tenant.GoogleCalendarEnabled,
+		GoogleCalendarID:      tenant.GoogleCalendarID,
+		GoogleCalendarToken:   tenant.GoogleCalendarToken,
+		GoogleClientID:        tenant.GoogleClientID,
+		GoogleClientSecret:    tenant.GoogleClientSecret,
+
+		ClerkEnabled:        tenant.ClerkEnabled,
+		ClerkPublishableKey: tenant.ClerkPublishableKey,
+		ClerkSecretKey:      tenant.ClerkSecretKey,
 	})
 }
 
@@ -1127,5 +1294,10 @@ func getTenantPublicConfigHandler(c *fiber.Ctx) error {
 		EmergencyNumber:     emergNum,
 		PrivacyURL:          tenant.PrivacyURL,
 		AllowedEmbedOrigins: tenant.GetAllowedEmbedOrigins(),
+		ChatwootEnabled:     tenant.ChatwootEnabled,
+		ChatwootBaseURL:     tenant.ChatwootBaseURL,
+		ChatwootInboxID:     tenant.ChatwootInboxID,
+		ClerkEnabled:        tenant.ClerkEnabled,
+		ClerkPublishableKey: tenant.ClerkPublishableKey,
 	})
 }

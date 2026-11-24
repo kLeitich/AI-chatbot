@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from 'react'
 import api from '../lib/api'
 import { usePermissions } from '../context/PermissionContext'
 import ShareAndEmbed from './ShareAndEmbed'
+import IntegrationsSettings from './IntegrationsSettings'
 
 export default function ClinicSetup({ tenant = 'default', includeDoctors = true }) {
   const { can } = usePermissions()
@@ -538,6 +539,13 @@ export default function ClinicSetup({ tenant = 'default', includeDoctors = true 
       {canManageSettings && (
         <section>
           <ShareAndEmbed tenant={tenant} />
+        </section>
+      )}
+
+      {/* SECTION 5: INTEGRATIONS (WHATSAPP, GCALENDAR, CLERK) */}
+      {canManageSettings && (
+        <section>
+          <IntegrationsSettings tenant={tenant} />
         </section>
       )}
     </div>
