@@ -16,6 +16,27 @@ type Tenant struct {
 	BookingLinkEnabled  bool      `gorm:"default:true" json:"booking_link_enabled"`
 	AllowedEmbedOrigins string    `gorm:"type:text;default:'[]'" json:"allowed_embed_origins"`
 	PrivacyURL          string    `gorm:"size:300" json:"privacy_url,omitempty"`
+
+	// Chatwoot & WhatsApp Integration
+	ChatwootEnabled       bool   `gorm:"default:false" json:"chatwoot_enabled"`
+	ChatwootBaseURL       string `gorm:"size:255" json:"chatwoot_base_url,omitempty"`
+	ChatwootAPIToken      string `gorm:"size:255" json:"chatwoot_api_token,omitempty"`
+	ChatwootAccountID     int    `json:"chatwoot_account_id,omitempty"`
+	ChatwootInboxID       int    `json:"chatwoot_inbox_id,omitempty"`
+	ChatwootWebhookSecret string `gorm:"size:255" json:"chatwoot_webhook_secret,omitempty"`
+
+	// Google Calendar Integration
+	GoogleCalendarEnabled bool   `gorm:"default:false" json:"google_calendar_enabled"`
+	GoogleCalendarID      string `gorm:"size:255" json:"google_calendar_id,omitempty"`
+	GoogleCalendarToken   string `gorm:"type:text" json:"google_calendar_token,omitempty"`
+	GoogleClientID        string `gorm:"size:255" json:"google_client_id,omitempty"`
+	GoogleClientSecret    string `gorm:"size:255" json:"google_client_secret,omitempty"`
+
+	// Clerk SSO Integration
+	ClerkEnabled        bool   `gorm:"default:false" json:"clerk_enabled"`
+	ClerkPublishableKey string `gorm:"size:255" json:"clerk_publishable_key,omitempty"`
+	ClerkSecretKey      string `gorm:"size:255" json:"clerk_secret_key,omitempty"`
+
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
 }
@@ -48,6 +69,7 @@ type User struct {
 	MustChangePassword bool      `gorm:"default:false" json:"must_change_password"`
 	TokenVersion       int       `gorm:"default:1" json:"token_version"`
 	TenantID           uint      `gorm:"index" json:"tenant_id"`
+	ClerkUserID        string    `gorm:"index;size:255" json:"clerk_user_id,omitempty"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
@@ -59,19 +81,22 @@ const (
 )
 
 type Appointment struct {
-	ID          uint      `gorm:"primaryKey" json:"id"`
-	// See comment on User.TenantID – nullable at DB level, required in app logic.
-	TenantID    uint      `gorm:"index" json:"tenant_id"`
-	PatientName string    `gorm:"size:255;not null" json:"patient_name"`
-	Doctor      string    `gorm:"size:255;not null" json:"doctor"`
-	DoctorID    *uint     `gorm:"index" json:"doctor_id,omitempty"`
-	Date        string    `gorm:"size:10;not null" json:"date"`
-	Time        string    `gorm:"size:5;not null" json:"time"`
-	Reason      string    `gorm:"size:500" json:"reason"`
-	Status      string    `gorm:"size:50;default:pending" json:"status"`
-	Source      *string   `gorm:"size:30" json:"source,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID                     uint      `gorm:"primaryKey" json:"id"`
+	TenantID               uint      `gorm:"index" json:"tenant_id"`
+	PatientName            string    `gorm:"size:255;not null" json:"patient_name"`
+	PatientPhone           string    `gorm:"size:50" json:"patient_phone,omitempty"`
+	PatientEmail           string    `gorm:"size:255" json:"patient_email,omitempty"`
+	Doctor                 string    `gorm:"size:255;not null" json:"doctor"`
+	DoctorID               *uint     `gorm:"index" json:"doctor_id,omitempty"`
+	Date                   string    `gorm:"size:10;not null" json:"date"`
+	Time                   string    `gorm:"size:5;not null" json:"time"`
+	Reason                 string    `gorm:"size:500" json:"reason"`
+	Status                 string    `gorm:"size:50;default:pending" json:"status"`
+	Source                 *string   `gorm:"size:30" json:"source,omitempty"`
+	GoogleEventID          string    `gorm:"size:255" json:"google_event_id,omitempty"`
+	ChatwootConversationID *int      `json:"chatwoot_conversation_id,omitempty"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 // Appointment status constants
@@ -93,18 +118,19 @@ func isValidStatus(status string) bool {
 }
 
 type Doctor struct {
-	ID          uint      `gorm:"primaryKey" json:"id"`
-	TenantID    uint      `gorm:"index" json:"tenant_id"`
-	Name        string    `gorm:"size:255;not null" json:"name"`
-	Specialty   string    `gorm:"size:255" json:"specialty"`
-	Bio         string    `gorm:"size:500" json:"bio"`
-	WorkDays    string    `gorm:"size:100;default:'Mon,Tue,Wed,Thu,Fri,Sat'" json:"work_days"`
-	WorkStart   string    `gorm:"size:5;default:'09:00'" json:"work_start"`
-	WorkEnd     string    `gorm:"size:5;default:'17:00'" json:"work_end"`
-	SlotMinutes int       `gorm:"default:30" json:"slot_minutes"`
-	Active      bool      `gorm:"default:true" json:"active"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID               uint      `gorm:"primaryKey" json:"id"`
+	TenantID         uint      `gorm:"index" json:"tenant_id"`
+	Name             string    `gorm:"size:255;not null" json:"name"`
+	Specialty        string    `gorm:"size:255" json:"specialty"`
+	Bio              string    `gorm:"size:500" json:"bio"`
+	WorkDays         string    `gorm:"size:100;default:'Mon,Tue,Wed,Thu,Fri,Sat'" json:"work_days"`
+	WorkStart        string    `gorm:"size:5;default:'09:00'" json:"work_start"`
+	WorkEnd          string    `gorm:"size:5;default:'17:00'" json:"work_end"`
+	SlotMinutes      int       `gorm:"default:30" json:"slot_minutes"`
+	Active           bool      `gorm:"default:true" json:"active"`
+	GoogleCalendarID string    `gorm:"size:255" json:"google_calendar_id,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type AuditLog struct {
