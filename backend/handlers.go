@@ -526,13 +526,14 @@ func deleteAppointment(c *fiber.Ctx) error {
 }
 
 type createDoctorRequest struct {
-	Name        string `json:"name"`
-	Specialty   string `json:"specialty"`
-	Bio         string `json:"bio"`
-	WorkDays    string `json:"work_days"`
-	WorkStart   string `json:"work_start"`
-	WorkEnd     string `json:"work_end"`
-	SlotMinutes int    `json:"slot_minutes"`
+	Name             string `json:"name"`
+	Specialty        string `json:"specialty"`
+	Bio              string `json:"bio"`
+	WorkDays         string `json:"work_days"`
+	WorkStart        string `json:"work_start"`
+	WorkEnd          string `json:"work_end"`
+	SlotMinutes      int    `json:"slot_minutes"`
+	GoogleCalendarID string `json:"google_calendar_id"`
 }
 
 type createReasonRequest struct {
@@ -564,14 +565,15 @@ func listDoctors(c *fiber.Ctx) error {
 }
 
 type patchDoctorRequest struct {
-	Name        *string `json:"name"`
-	Specialty   *string `json:"specialty"`
-	Bio         *string `json:"bio"`
-	WorkDays    *string `json:"work_days"`
-	WorkStart   *string `json:"work_start"`
-	WorkEnd     *string `json:"work_end"`
-	SlotMinutes *int    `json:"slot_minutes"`
-	Active      *bool   `json:"active"`
+	Name             *string `json:"name"`
+	Specialty        *string `json:"specialty"`
+	Bio              *string `json:"bio"`
+	WorkDays         *string `json:"work_days"`
+	WorkStart        *string `json:"work_start"`
+	WorkEnd          *string `json:"work_end"`
+	SlotMinutes      *int    `json:"slot_minutes"`
+	Active           *bool   `json:"active"`
+	GoogleCalendarID *string `json:"google_calendar_id"`
 }
 
 type patchReasonRequest struct {
@@ -671,6 +673,10 @@ func patchDoctor(c *fiber.Ctx) error {
 		doc.Active = *req.Active
 	}
 
+	if req.GoogleCalendarID != nil {
+		doc.GoogleCalendarID = strings.TrimSpace(*req.GoogleCalendarID)
+	}
+
 	if err := db.Save(&doc).Error; err != nil {
 		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "failed to update doctor")
 	}
@@ -729,8 +735,9 @@ func createDoctor(c *fiber.Ctx) error {
 		WorkDays:    workDays,
 		WorkStart:   workStart,
 		WorkEnd:     workEnd,
-		SlotMinutes: slotMins,
-		Active:      true,
+		SlotMinutes:      slotMins,
+		Active:           true,
+		GoogleCalendarID: strings.TrimSpace(req.GoogleCalendarID),
 	}
 
 	if err := db.Create(&doctor).Error; err != nil {

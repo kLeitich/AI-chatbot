@@ -20,6 +20,7 @@ export default function DoctorManagement({ tenant = 'default' }) {
     work_start: '09:00',
     work_end: '17:00',
     slot_minutes: 30,
+    google_calendar_id: '',
   })
   const [doctorMsg, setDoctorMsg] = useState({ error: '', success: '' })
 
@@ -68,6 +69,7 @@ export default function DoctorManagement({ tenant = 'default' }) {
         work_start: '09:00',
         work_end: '17:00',
         slot_minutes: 30,
+        google_calendar_id: '',
       })
       fetchDoctors()
     } catch (err) {
@@ -86,6 +88,7 @@ export default function DoctorManagement({ tenant = 'default' }) {
       work_start: doc.work_start || '09:00',
       work_end: doc.work_end || '17:00',
       slot_minutes: doc.slot_minutes || 30,
+      google_calendar_id: doc.google_calendar_id || '',
     })
     setDoctorMsg({ error: '', success: '' })
   }
@@ -247,6 +250,22 @@ export default function DoctorManagement({ tenant = 'default' }) {
               value={doctorForm.bio}
               onChange={(e) => setDoctorForm({ ...doctorForm, bio: e.target.value })}
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1">
+              Google Calendar ID (Optional - e.g. dr.smith@clinic.com)
+            </label>
+            <input
+              type="text"
+              placeholder="primary or doctor's specific Google Calendar email"
+              className="w-full border rounded-lg p-2 text-sm bg-white"
+              value={doctorForm.google_calendar_id}
+              onChange={(e) => setDoctorForm({ ...doctorForm, google_calendar_id: e.target.value })}
+            />
+            <span className="text-[10px] text-slate-500">
+              Leave blank to sync to the clinic&apos;s default calendar.
+            </span>
           </div>
 
           <div className="flex justify-end gap-2">

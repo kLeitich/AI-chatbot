@@ -11,6 +11,7 @@ export default function AdminLogin({ tenant = 'default' }) {
   const [notice, setNotice] = useState('')
   const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(false)
+  const [tenantConfig, setTenantConfig] = useState(null)
   const router = useRouter()
 
   useEffect(() => {
@@ -20,7 +21,12 @@ export default function AdminLogin({ tenant = 'default' }) {
         setNotice('Your session has ended. Please sign in again.')
       }
     }
-  }, [])
+    if (tenant) {
+      api.get(`/t/${tenant}/public-config`)
+        .then((res) => setTenantConfig(res.data))
+        .catch(() => {})
+    }
+  }, [tenant])
 
   const submit = async (e) => {
     e.preventDefault()
@@ -44,6 +50,7 @@ export default function AdminLogin({ tenant = 'default' }) {
   const handleClerkSSO = async () => {
     setError('')
     const clerkKey =
+      tenantConfig?.clerk_publishable_key ||
       process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||
       (typeof window !== 'undefined' ? window.CLERK_PUBLISHABLE_KEY : null)
 
@@ -106,7 +113,7 @@ export default function AdminLogin({ tenant = 'default' }) {
   return (
     <div className="min-h-screen grid place-items-center p-4">
       <form onSubmit={submit} className="bg-white border rounded p-6 w-full max-w-sm shadow space-y-3">
-        <h2 className="text-xl font-semibold">Admin Login</h2>
+        <h2 className="text-xl font-semibold">{tenantConfig?.name ? `${tenantConfig.name} Admin Login` : 'Admin Login'}</h2>
         {notice && <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded p-2 text-xs font-medium">{notice}</p>}
         <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="Email" className="w-full border rounded p-2" />
         <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="Password" className="w-full border rounded p-2" />

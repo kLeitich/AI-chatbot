@@ -63,24 +63,17 @@ func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
 
 // fetchClerkJWKS retrieves and caches RSA public keys from Clerk's JWKS endpoint
 func fetchClerkPublicKey(kid string, tenant Tenant) (*rsa.PublicKey, error) {
-	clerkJWKSCacheMu.RLock()
-	if time.Now().Before(clerkJWKSCacheExp) {
-		if key, exists := clerkJWKSCache[kid]; exists {
-			clerkJWKSCacheMu.RUnlock()
-			return key, nil
-		}
-	}
-	clerkJWKSCacheMu.RUnlock()
-
 	// Determine Clerk JWKS URL
 	jwksURL := os.Getenv("CLERK_JWKS_URL")
 	if jwksURL == "" {
 		frontendAPI := os.Getenv("CLERK_FRONTEND_API")
 		if frontendAPI == "" && tenant.ClerkPublishableKey != "" {
-			// Extract domain from publishable key if format pk_test_<base64>
 			parts := strings.Split(tenant.ClerkPublishableKey, "_")
 			if len(parts) >= 3 {
-				decoded, _ := base64.RawStdEncoding.DecodeString(parts[2])
+				decoded, err := base64.RawURLEncoding.DecodeString(parts[2])
+				if err != nil {
+					decoded, _ = base64.RawStdEncoding.DecodeString(parts[2])
+				}
 				if len(decoded) > 0 {
 					frontendAPI = strings.TrimSuffix(string(decoded), "$")
 				}
@@ -97,6 +90,17 @@ func fetchClerkPublicKey(kid string, tenant Tenant) (*rsa.PublicKey, error) {
 	if jwksURL == "" {
 		return nil, errors.New("clerk JWKS URL not configured")
 	}
+
+	cacheKey := fmt.Sprintf("%s:%s", jwksURL, kid)
+
+	clerkJWKSCacheMu.RLock()
+	if time.Now().Before(clerkJWKSCacheExp) {
+		if key, exists := clerkJWKSCache[cacheKey]; exists {
+			clerkJWKSCacheMu.RUnlock()
+			return key, nil
+		}
+	}
+	clerkJWKSCacheMu.RUnlock()
 
 	resp, err := clerkHTTPClient.Get(jwksURL)
 	if err != nil {
@@ -119,16 +123,17 @@ func fetchClerkPublicKey(kid string, tenant Tenant) (*rsa.PublicKey, error) {
 
 	for _, k := range jwks.Keys {
 		if pubKey, err := parseRSAPublicKey(k.N, k.E); err == nil {
-			clerkJWKSCache[k.Kid] = pubKey
+			cKey := fmt.Sprintf("%s:%s", jwksURL, k.Kid)
+			clerkJWKSCache[cKey] = pubKey
 		}
 	}
 	clerkJWKSCacheExp = time.Now().Add(1 * time.Hour)
 
-	if key, exists := clerkJWKSCache[kid]; exists {
+	if key, exists := clerkJWKSCache[cacheKey]; exists {
 		return key, nil
 	}
 
-	return nil, fmt.Errorf("key with kid '%s' not found in Clerk JWKS", kid)
+	return nil, fmt.Errorf("key with kid '%s' not found in Clerk JWKS (%s)", kid, jwksURL)
 }
 
 // validateClerkToken verifies an incoming Clerk session JWT and bridges to Booka User
@@ -179,25 +184,23 @@ func validateClerkToken(tokStr string, tenantSlug string) (*User, error) {
 		}
 	}
 
-	// Match or link to Booka User
+	// Multitenant User Resolution
 	var user User
-	// 1. Try matching by clerk_user_id
-	if err := db.Where("clerk_user_id = ?", sub).First(&user).Error; err == nil {
-		return &user, nil
-	}
 
-	// 2. Try matching by email
-	if email != "" {
-		cleanEmail := strings.ToLower(strings.TrimSpace(email))
-		if err := db.Where("email = ?", cleanEmail).First(&user).Error; err == nil {
-			// Link clerk_user_id for future fast lookups
-			user.ClerkUserID = sub
-			db.Model(&user).Update("clerk_user_id", sub)
+	if targetTenant.ID > 0 {
+		// Scoped explicitly to this clinic tenant
+		if err := db.Where("clerk_user_id = ? AND tenant_id = ?", sub, targetTenant.ID).First(&user).Error; err == nil {
 			return &user, nil
 		}
+		if email != "" {
+			cleanEmail := strings.ToLower(strings.TrimSpace(email))
+			if err := db.Where("email = ? AND tenant_id = ?", cleanEmail, targetTenant.ID).First(&user).Error; err == nil {
+				user.ClerkUserID = sub
+				db.Model(&user).Update("clerk_user_id", sub)
+				return &user, nil
+			}
 
-		// 3. Auto-provision user under tenant if tenant is found
-		if targetTenant.ID > 0 {
+			// Auto-provision user under target tenant
 			newUser := User{
 				TenantID:     targetTenant.ID,
 				Email:        cleanEmail,
@@ -209,6 +212,52 @@ func validateClerkToken(tokStr string, tenantSlug string) (*User, error) {
 			if cErr := db.Create(&newUser).Error; cErr == nil {
 				log.Printf("[CLERK SSO] Auto-provisioned user '%s' under tenant '%s' via Clerk", cleanEmail, targetTenant.Slug)
 				return &newUser, nil
+			}
+		}
+	} else {
+		// Global login: check if token claims contain an organization or tenant slug
+		if orgSlug, ok := claims["org_slug"].(string); ok && orgSlug != "" {
+			_ = db.Where("slug = ?", orgSlug).First(&targetTenant).Error
+		} else if tenantClaim, ok := claims["tenant_slug"].(string); ok && tenantClaim != "" {
+			_ = db.Where("slug = ?", tenantClaim).First(&targetTenant).Error
+		}
+
+		if targetTenant.ID > 0 {
+			cleanEmail := strings.ToLower(strings.TrimSpace(email))
+			if err := db.Where("clerk_user_id = ? AND tenant_id = ?", sub, targetTenant.ID).First(&user).Error; err == nil {
+				return &user, nil
+			}
+			if cleanEmail != "" {
+				if err := db.Where("email = ? AND tenant_id = ?", cleanEmail, targetTenant.ID).First(&user).Error; err == nil {
+					user.ClerkUserID = sub
+					db.Model(&user).Update("clerk_user_id", sub)
+					return &user, nil
+				}
+				newUser := User{
+					TenantID:     targetTenant.ID,
+					Email:        cleanEmail,
+					Role:         RoleStaff,
+					Status:       "active",
+					TokenVersion: 1,
+					ClerkUserID:  sub,
+				}
+				if cErr := db.Create(&newUser).Error; cErr == nil {
+					return &newUser, nil
+				}
+			}
+		} else {
+			// Match existing user by clerk_user_id across tenants
+			if err := db.Where("clerk_user_id = ?", sub).First(&user).Error; err == nil {
+				return &user, nil
+			}
+			// Match existing user by email
+			if email != "" {
+				cleanEmail := strings.ToLower(strings.TrimSpace(email))
+				if err := db.Where("email = ?", cleanEmail).First(&user).Error; err == nil {
+					user.ClerkUserID = sub
+					db.Model(&user).Update("clerk_user_id", sub)
+					return &user, nil
+				}
 			}
 		}
 	}
