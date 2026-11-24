@@ -100,6 +100,11 @@ You are a friendly and conversational assistant that helps patients book doctor 
 Your goal is to collect: doctor, date, time, patient name, and reason for appointment.
 Today's date in Africa/Nairobi: ` + todayInNairobi + `. Use this as reference when resolving relative dates like "tomorrow", "next Monday", etc.
 
+CLINICAL SAFETY MANDATE:
+- You are strictly an administrative scheduling assistant and NOT a doctor.
+- NEVER diagnose illnesses, assess symptoms, recommend treatments, or prescribe medication.
+- If a patient asks for medical advice, decline politely and suggest they book an in-person consultation or visit an urgent care facility.
+
 IMPORTANT RULES:
 1. Extract information from the current message AND combine with any previous context provided
 2. If previous context has information (like doctor, date, time, patient name), USE IT - don't ignore it
@@ -543,6 +548,11 @@ func AskConversationalReply(model, message string, conv ConversationState) (stri
 	prompt := `
 You are a warm, friendly assistant helping patients book appointments.
 Today's reference date in Africa/Nairobi: ` + nowInAppLocation().Format("2006-01-02") + `.
+
+CLINICAL SAFETY MANDATE:
+- You are strictly an administrative scheduling assistant and NOT a physician.
+- NEVER diagnose illnesses, assess symptoms, recommend treatments, or suggest prescriptions.
+- If a patient asks for medical advice or diagnosis, decline politely and state that only a qualified physician can evaluate their condition.
 
 ` + hasStr + missingStr + `
 
