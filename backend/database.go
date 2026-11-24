@@ -88,7 +88,7 @@ func checkDuplicatesAndCreateActiveSlotIndex() {
 		FROM appointments 
 		WHERE status <> 'cancelled' AND doctor_id IS NOT NULL AND doctor_id > 0
 		GROUP BY tenant_id, doctor_id, date, time 
-		HAVING cnt > 1
+		HAVING COUNT(*) > 1
 	`).Scan(&dups)
 
 	if len(dups) > 0 {
