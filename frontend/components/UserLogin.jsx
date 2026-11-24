@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import api from '../lib/api'
+import { initiateClerkGoogleAuth } from '../lib/clerkAuth'
 
 export default function UserLogin() {
   const [email, setEmail] = useState('')
@@ -73,66 +74,25 @@ export default function UserLogin() {
 
   const handleClerkSSO = async () => {
     setError('')
-    const clerkKey =
-      process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||
-      (typeof window !== 'undefined' ? window.CLERK_PUBLISHABLE_KEY : null)
-
-    if (!clerkKey) {
-      setError(
-        'Clerk SSO is not yet enabled for this instance. Please sign in with email/password or configure Clerk Publishable Key in Admin Integrations Settings.'
-      )
-      return
-    }
-
+    setLoading(true)
     try {
-      setLoading(true)
-      if (typeof window !== 'undefined' && !window.Clerk) {
-        await new Promise((resolve, reject) => {
-          const script = document.createElement('script')
-          script.src = 'https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js'
-          script.async = true
-          script.setAttribute('data-clerk-publishable-key', clerkKey)
-          script.onload = () => resolve()
-          script.onerror = () => reject(new Error('Failed to load Clerk authentication library'))
-          document.head.appendChild(script)
-        })
-      }
-
-      if (window.Clerk) {
-        if (!window.Clerk.loaded) {
-          await window.Clerk.load({ publishableKey: clerkKey })
-        }
-
-        window.Clerk.openSignIn({
-          afterSignInUrl: window.location.href,
-        })
-
-        const checkInterval = setInterval(async () => {
-          if (window.Clerk?.session) {
-            clearInterval(checkInterval)
-            const token = await window.Clerk.session.getToken()
-            if (token) {
-              const res = await api.post('/auth/clerk/sync', { token })
-              const { token: bookaToken, user, tenant } = res.data || {}
-              if (bookaToken) {
-                localStorage.setItem('token', bookaToken)
-                if (user?.role) localStorage.setItem('role', user.role)
-                if (user?.tenant_id) localStorage.setItem('tenant_id', user.tenant_id)
-
-                setSuccess('Signed in via Clerk SSO! Redirecting...')
-                const tenantSlug = tenant?.slug || 'default'
-                setTimeout(() => {
-                  router.replace(`/t/${tenantSlug}/admin/dashboard`)
-                }, 700)
-              }
-            }
-          }
-        }, 1000)
-
-        setTimeout(() => clearInterval(checkInterval), 120000)
-      }
+      await initiateClerkGoogleAuth({
+        mode: 'signIn',
+        onProgress: (status) => setSuccess(status),
+        onSuccess: (data) => {
+          setSuccess('Signed in successfully! Redirecting...')
+          const tenantSlug = data?.tenant?.slug || (data?.user?.tenant_id ? String(data.user.tenant_id) : 'default')
+          setTimeout(() => {
+            router.replace(`/t/${tenantSlug}/admin/dashboard`)
+          }, 700)
+        },
+        onError: (errMsg) => {
+          setError(errMsg)
+          setLoading(false)
+        },
+      })
     } catch (err) {
-      setError(err?.message || 'Failed to initiate Clerk SSO')
+      setError(err?.message || 'Failed to initiate Google / Clerk authentication')
       setLoading(false)
     }
   }

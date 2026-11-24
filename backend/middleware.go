@@ -26,7 +26,7 @@ func jwtMiddleware(c *fiber.Ctx) error {
 	if err != nil || !tok.Valid {
 		// Fallback: check if valid Clerk token (RS256)
 		tenantSlug := c.Params("tenant")
-		if user, clerkErr := validateClerkToken(tokStr, tenantSlug); clerkErr == nil && user != nil {
+		if user, _, clerkErr := validateClerkToken(tokStr, tenantSlug, ""); clerkErr == nil && user != nil {
 			if user.Status == "disabled" {
 				return sendError(c, fiber.StatusUnauthorized, ErrCodeAccountDisabled, "account is disabled; please contact support")
 			}

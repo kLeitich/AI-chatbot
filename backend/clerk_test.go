@@ -58,3 +58,31 @@ func TestClerkSyncHandlerMissingToken(t *testing.T) {
 		t.Errorf("Expected 401 Unauthorized for invalid clerk token, got %d", respTenant.StatusCode)
 	}
 }
+
+func TestCreateUniqueTenantSlug(t *testing.T) {
+	setupTestDB(t)
+
+	// 1. Normal name
+	slug1 := createUniqueTenantSlug("Dr. Smith Clinic")
+	if slug1 != "dr-smith-clinic" {
+		t.Errorf("Expected 'dr-smith-clinic', got '%s'", slug1)
+	}
+
+	// 2. Reserved slug (e.g. "admin")
+	slugReserved := createUniqueTenantSlug("Admin")
+	if slugReserved == "admin" || slugReserved != "admin-1" {
+		t.Errorf("Expected 'admin-1' for reserved slug, got '%s'", slugReserved)
+	}
+
+	// 3. Duplicate handling
+	t1 := Tenant{Name: "Alpha Dental", Slug: "alpha-dental"}
+	if err := db.Create(&t1).Error; err != nil {
+		t.Fatalf("Failed to create tenant: %v", err)
+	}
+
+	slugDup := createUniqueTenantSlug("Alpha Dental")
+	if slugDup != "alpha-dental-1" {
+		t.Errorf("Expected 'alpha-dental-1' for duplicate, got '%s'", slugDup)
+	}
+}
+
