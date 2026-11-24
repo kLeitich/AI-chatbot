@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import api from '../lib/api'
-import { initiateClerkGoogleAuth } from '../lib/clerkAuth'
+import { initiateClerkGoogleAuth, checkAndSyncClerkSession } from '../lib/clerkAuth'
 
 export default function AdminLogin({ tenant = 'default' }) {
   const [email, setEmail] = useState('')
@@ -24,10 +24,36 @@ export default function AdminLogin({ tenant = 'default' }) {
     }
     if (tenant) {
       api.get(`/t/${tenant}/public-config`)
-        .then((res) => setTenantConfig(res.data))
-        .catch(() => {})
+        .then((res) => {
+          setTenantConfig(res.data)
+          checkAndSyncClerkSession({
+            tenant,
+            clerkPublishableKey: res.data?.clerk_publishable_key,
+            onProgress: (status) => setSuccess(status),
+            onSuccess: () => {
+              setSuccess('Signed in via Clerk SSO! Redirecting...')
+              setTimeout(() => {
+                router.replace(`/t/${tenant}/admin/dashboard`)
+              }, 700)
+            },
+            onError: (errMsg) => setError(errMsg),
+          })
+        })
+        .catch(() => {
+          checkAndSyncClerkSession({
+            tenant,
+            onProgress: (status) => setSuccess(status),
+            onSuccess: () => {
+              setSuccess('Signed in via Clerk SSO! Redirecting...')
+              setTimeout(() => {
+                router.replace(`/t/${tenant}/admin/dashboard`)
+              }, 700)
+            },
+            onError: (errMsg) => setError(errMsg),
+          })
+        })
     }
-  }, [tenant])
+  }, [tenant, router])
 
   const submit = async (e) => {
     e.preventDefault()

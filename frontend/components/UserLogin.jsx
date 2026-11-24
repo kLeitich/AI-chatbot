@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import api from '../lib/api'
-import { initiateClerkGoogleAuth } from '../lib/clerkAuth'
+import { initiateClerkGoogleAuth, checkAndSyncClerkSession } from '../lib/clerkAuth'
 
 export default function UserLogin() {
   const [email, setEmail] = useState('')
@@ -20,8 +20,19 @@ export default function UserLogin() {
       if (params.get('notice') === 'session_ended' || params.get('session_ended')) {
         setNotice('Your session has ended. Please sign in again.')
       }
+      checkAndSyncClerkSession({
+        onProgress: (status) => setSuccess(status),
+        onSuccess: (data) => {
+          setSuccess('Signed in successfully! Redirecting...')
+          const tenantSlug = data?.tenant?.slug || (data?.user?.tenant_id ? String(data.user.tenant_id) : 'default')
+          setTimeout(() => {
+            router.replace(`/t/${tenantSlug}/admin/dashboard`)
+          }, 700)
+        },
+        onError: (errMsg) => setError(errMsg),
+      })
     }
-  }, [])
+  }, [router])
 
   const submit = async (e) => {
     e.preventDefault()

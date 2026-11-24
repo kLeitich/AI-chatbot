@@ -1,8 +1,8 @@
 "use client"
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import api from '../lib/api'
-import { initiateClerkGoogleAuth } from '../lib/clerkAuth'
+import { initiateClerkGoogleAuth, checkAndSyncClerkSession } from '../lib/clerkAuth'
 
 export default function CompanySignup() {
   const [formData, setFormData] = useState({
@@ -15,6 +15,20 @@ export default function CompanySignup() {
   const [loading, setLoading] = useState(false)
   const [successMessage, setSuccessMessage] = useState('')
   const router = useRouter()
+
+  useEffect(() => {
+    checkAndSyncClerkSession({
+      onProgress: (status) => setSuccessMessage(status),
+      onSuccess: (data) => {
+        setSuccessMessage('Account and clinic practice ready! Redirecting to dashboard...')
+        const tenantSlug = data?.tenant?.slug || data?.user?.tenant_id || 'default'
+        setTimeout(() => {
+          router.replace(`/t/${tenantSlug}/admin/dashboard`)
+        }, 800)
+      },
+      onError: (errMsg) => setError(errMsg),
+    })
+  }, [router])
 
   const handleChange = (e) => {
     const { name, value } = e.target
