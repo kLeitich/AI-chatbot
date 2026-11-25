@@ -2,7 +2,11 @@ package main
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -12,15 +16,16 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"gorm.io/gorm"
 )
 
 // ChatwootWebhookPayload represents incoming webhook payloads from Chatwoot
 type ChatwootWebhookPayload struct {
+	ID           int                  `json:"id"`
 	Event        string               `json:"event"`
 	MessageType  interface{}          `json:"message_type"` // Can be string ("incoming"/"outgoing") or int (0/1)
 	Content      string               `json:"content"`
 	Private      bool                 `json:"private"`
+	Status       string               `json:"status"` // For conversation_status_changed / conversation_updated
 	Conversation ChatwootConversation `json:"conversation"`
 	Sender       ChatwootSender       `json:"sender"`
 	Account      ChatwootAccount      `json:"account"`
@@ -79,6 +84,63 @@ func (p *ChatwootWebhookPayload) isIncomingMessage() bool {
 	default:
 		return false
 	}
+}
+
+// resolveTenantForChatwootWebhook identifies the exact healthcare provider from Chatwoot InboxID or URL slug
+func resolveTenantForChatwootWebhook(inboxID, accountID int, urlSlug string) (Tenant, error) {
+	var tenant Tenant
+
+	// 1. Trusted inbox mapping (highest priority)
+	if inboxID > 0 {
+		if accountID > 0 {
+			if err := db.Where("chatwoot_inbox_id = ? AND chatwoot_account_id = ?", inboxID, accountID).First(&tenant).Error; err == nil {
+				return tenant, nil
+			}
+		}
+		if err := db.Where("chatwoot_inbox_id = ?", inboxID).First(&tenant).Error; err == nil {
+			return tenant, nil
+		}
+	}
+
+	// 2. Fallback to URL parameter (/t/:tenant/webhooks/chatwoot)
+	if urlSlug != "" {
+		if err := db.Where("slug = ?", urlSlug).First(&tenant).Error; err == nil {
+			if tenant.ChatwootInboxID > 0 && inboxID > 0 && tenant.ChatwootInboxID != inboxID {
+				return Tenant{}, fmt.Errorf("inbox mismatch: url tenant '%s' requires inbox %d, got %d", urlSlug, tenant.ChatwootInboxID, inboxID)
+			}
+			return tenant, nil
+		}
+	}
+
+	return Tenant{}, fmt.Errorf("no clinic/hospital mapped to inbox_id=%d account_id=%d slug=%s", inboxID, accountID, urlSlug)
+}
+
+// verifyChatwootWebhookSecret validates HMAC signature or secret token when configured
+func verifyChatwootWebhookSecret(c *fiber.Ctx, tenant Tenant, rawBody []byte) bool {
+	secret := strings.TrimSpace(tenant.ChatwootWebhookSecret)
+	if secret == "" {
+		return true // Secret verification not enabled for this tenant
+	}
+
+	// Check explicit header or query token
+	if hdr := c.Get("X-Webhook-Secret"); hdr != "" {
+		return hmac.Equal([]byte(hdr), []byte(secret))
+	}
+	if q := c.Query("secret"); q != "" {
+		return hmac.Equal([]byte(q), []byte(secret))
+	}
+
+	// Check X-Chatwoot-Signature (HMAC-SHA256)
+	sig := strings.TrimSpace(c.Get("X-Chatwoot-Signature"))
+	if sig == "" {
+		return false
+	}
+	sig = strings.TrimPrefix(sig, "sha256=")
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(rawBody)
+	expectedMAC := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(sig), []byte(expectedMAC))
 }
 
 // SendChatwootMessage sends an outgoing reply into the Chatwoot conversation
@@ -152,7 +214,7 @@ func SendChatwootPrivateNote(baseURL, token string, accountID, conversationID in
 	return nil
 }
 
-// ToggleChatwootConversationStatus changes conversation status to open (for human handoff)
+// ToggleChatwootConversationStatus changes conversation status to open or resolved
 func ToggleChatwootConversationStatus(baseURL, token string, accountID, conversationID int, status string) error {
 	if baseURL == "" || token == "" || accountID == 0 || conversationID == 0 {
 		return nil
@@ -179,29 +241,142 @@ func ToggleChatwootConversationStatus(baseURL, token string, accountID, conversa
 	return nil
 }
 
-// chatwootWebhookHandler handles incoming webhooks from Chatwoot for WhatsApp messages
-func chatwootWebhookHandler(c *fiber.Ctx) error {
-	tenantSlug := strings.TrimSpace(c.Params("tenant"))
-	if tenantSlug == "" {
-		tenantSlug = "default"
+// SendAppointmentNotificationWhatsApp dispatches appointment notifications (booking/reminder/cancel) via Chatwoot
+func SendAppointmentNotificationWhatsApp(tenant Tenant, app *Appointment, message string) error {
+	if app == nil || app.ChatwootConversationID == nil || *app.ChatwootConversationID == 0 {
+		return nil
 	}
+	baseURL := tenant.ChatwootBaseURL
+	if baseURL == "" {
+		baseURL = getEnv("CHATWOOT_BASE_URL", "https://app.chatwoot.com")
+	}
+	apiToken := tenant.ChatwootAPIToken
+	if apiToken == "" {
+		apiToken = os.Getenv("CHATWOOT_API_TOKEN")
+	}
+	if tenant.ChatwootAccountID == 0 || apiToken == "" {
+		return nil
+	}
+	return SendChatwootMessage(baseURL, apiToken, tenant.ChatwootAccountID, *app.ChatwootConversationID, message)
+}
 
+// testChatwootConnectionHandler verifies Chatwoot API access token & inbox connectivity
+func testChatwootConnectionHandler(c *fiber.Ctx) error {
+	tenantSlug := strings.TrimSpace(c.Params("tenant"))
 	var tenant Tenant
 	if err := db.Where("slug = ?", tenantSlug).First(&tenant).Error; err != nil {
 		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "tenant not found")
 	}
 
+	baseURL := strings.TrimRight(tenant.ChatwootBaseURL, "/")
+	if baseURL == "" {
+		baseURL = getEnv("CHATWOOT_BASE_URL", "https://app.chatwoot.com")
+	}
+	apiToken := tenant.ChatwootAPIToken
+	if apiToken == "" {
+		apiToken = os.Getenv("CHATWOOT_API_TOKEN")
+	}
+
+	if apiToken == "" || tenant.ChatwootAccountID == 0 {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "Chatwoot API Token and Account ID must be saved before testing connectivity")
+	}
+
+	apiURL := fmt.Sprintf("%s/api/v1/accounts/%d/inboxes", baseURL, tenant.ChatwootAccountID)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, err.Error())
+	}
+	req.Header.Set("api_access_token", apiToken)
+
+	resp, err := chatwootHTTPClient.Do(req)
+	if err != nil {
+		return sendError(c, fiber.StatusBadGateway, ErrCodeExternalError, fmt.Sprintf("Failed to reach Chatwoot server: %v", err))
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return sendError(c, fiber.StatusBadGateway, ErrCodeExternalError, fmt.Sprintf("Chatwoot returned HTTP %d: %s", resp.StatusCode, string(body)))
+	}
+
+	var inboxesResp struct {
+		Payload []ChatwootInbox `json:"payload"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&inboxesResp)
+
+	inboxFound := false
+	matchedInboxName := ""
+	for _, inb := range inboxesResp.Payload {
+		if inb.ID == tenant.ChatwootInboxID {
+			inboxFound = true
+			matchedInboxName = inb.Name
+			break
+		}
+	}
+
+	return c.JSON(fiber.Map{
+		"status":             "connected",
+		"account_id":         tenant.ChatwootAccountID,
+		"configured_inbox":   tenant.ChatwootInboxID,
+		"inbox_verified":     inboxFound,
+		"matched_inbox_name": matchedInboxName,
+		"total_inboxes":      len(inboxesResp.Payload),
+	})
+}
+
+// chatwootWebhookHandler handles incoming webhooks from Chatwoot for WhatsApp messages
+func chatwootWebhookHandler(c *fiber.Ctx) error {
+	rawBody := c.Body()
 	var payload ChatwootWebhookPayload
-	if err := c.BodyParser(&payload); err != nil {
+	if err := json.Unmarshal(rawBody, &payload); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid webhook payload")
 	}
 
-	// 1. Only process message_created events
+	inboxID := payload.Inbox.ID
+	if inboxID == 0 {
+		inboxID = payload.Conversation.InboxID
+	}
+	accountID := payload.Account.ID
+	if accountID == 0 {
+		accountID = payload.Conversation.AccountID
+	}
+	urlSlug := strings.TrimSpace(c.Params("tenant"))
+
+	tenant, err := resolveTenantForChatwootWebhook(inboxID, accountID, urlSlug)
+	if err != nil {
+		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, err.Error())
+	}
+
+	// Verify signature / webhook secret if configured
+	if !verifyChatwootWebhookSecret(c, tenant, rawBody) {
+		return sendError(c, fiber.StatusUnauthorized, ErrCodePermissionDenied, "invalid webhook signature")
+	}
+
+	convID := payload.Conversation.ID
+
+	// Handle conversation status transitions (e.g. human resolved -> resume AI)
+	if payload.Event == "conversation_status_changed" || payload.Event == "conversation_updated" {
+		status := payload.Status
+		if status == "" {
+			status = payload.Conversation.Status
+		}
+		if strings.EqualFold(status, "resolved") && convID > 0 {
+			sessionKey := fmt.Sprintf("chatwoot-%d-%d", tenant.ID, convID)
+			db.Model(&ChatSession{}).Where("session_id = ?", sessionKey).Updates(map[string]interface{}{
+				"human_handover": false,
+				"ai_enabled":     tenant.AIReceptionistEnabled,
+				"workflow_state": "initial",
+			})
+		}
+		return c.JSON(fiber.Map{"status": "ignored", "reason": "conversation event processed"})
+	}
+
+	// 1. Only process message_created events beyond this point
 	if payload.Event != "message_created" {
 		return c.JSON(fiber.Map{"status": "ignored", "reason": "unhandled event type"})
 	}
 
-	// 2. Only process incoming customer messages (ignore bot's own replies to avoid infinite loop)
+	// 2. Only process incoming customer messages (ignore bot's own replies or private notes)
 	if !payload.isIncomingMessage() {
 		return c.JSON(fiber.Map{"status": "ignored", "reason": "not incoming contact message"})
 	}
@@ -211,8 +386,37 @@ func chatwootWebhookHandler(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ignored", "reason": "empty message"})
 	}
 
-	convID := payload.Conversation.ID
-	accountID := payload.Account.ID
+	// 3. Idempotency Guard: Deduplicate repeated webhooks for the same message ID
+	if payload.ID > 0 {
+		var existing int64
+		db.Model(&ChatwootProcessedMessage{}).Where("message_id = ?", payload.ID).Count(&existing)
+		if existing > 0 {
+			return c.JSON(fiber.Map{"status": "ignored", "reason": "duplicate_message"})
+		}
+		_ = db.Create(&ChatwootProcessedMessage{
+			MessageID:      payload.ID,
+			ConversationID: convID,
+			InboxID:        inboxID,
+			TenantID:       tenant.ID,
+			ProcessedAt:    time.Now(),
+		}).Error
+	}
+
+	// 4. Synchronous processing in test runs, non-blocking background execution in production
+	isTestMode := flag.Lookup("test.v") != nil
+	if isTestMode {
+		resMap := executeChatwootWebhookMessage(tenant, payload, inboxID, accountID, convID, messageText)
+		return c.JSON(resMap)
+	}
+
+	go func() {
+		_ = executeChatwootWebhookMessage(tenant, payload, inboxID, accountID, convID, messageText)
+	}()
+
+	return c.JSON(fiber.Map{"status": "accepted", "tenant": tenant.Slug})
+}
+
+func executeChatwootWebhookMessage(tenant Tenant, payload ChatwootWebhookPayload, inboxID, accountID, convID int, messageText string) fiber.Map {
 	if accountID == 0 {
 		accountID = tenant.ChatwootAccountID
 	}
@@ -225,39 +429,83 @@ func chatwootWebhookHandler(c *fiber.Ctx) error {
 		apiToken = os.Getenv("CHATWOOT_API_TOKEN")
 	}
 
-	// Session ID based on Chatwoot conversation ID for state continuity
-	sessionID := fmt.Sprintf("chatwoot-%d", convID)
-
-	// Extract phone number from sender or WhatsApp contact inbox source_id
 	phone := strings.TrimSpace(payload.Sender.PhoneNumber)
 	if phone == "" {
 		phone = strings.TrimSpace(payload.Conversation.ContactInbox.SourceID)
 	}
 	senderName := strings.TrimSpace(payload.Sender.Name)
 
-	// Check for human agent handoff request
-	lowerText := strings.ToLower(messageText)
-	if strings.Contains(lowerText, "human") || strings.Contains(lowerText, "agent") ||
-		strings.Contains(lowerText, "receptionist") || strings.Contains(lowerText, "speak to someone") {
-		handoffMsg := "I have notified our clinic reception team. An agent will respond to you here on WhatsApp shortly."
-		_ = SendChatwootMessage(baseURL, apiToken, accountID, convID, handoffMsg)
-		_ = SendChatwootPrivateNote(baseURL, apiToken, accountID, convID, fmt.Sprintf("👋 [Booka Bot] Patient requested human handoff. Phone: %s Name: %s", phone, senderName))
-		_ = ToggleChatwootConversationStatus(baseURL, apiToken, accountID, convID, "open")
-		return c.JSON(fiber.Map{"status": "handoff_initiated"})
+	convKey := fmt.Sprintf("cw:%d:%d", tenant.ID, convID)
+	unlock := acquireSessionLock(convKey)
+	defer unlock()
+
+	session, err := loadOrCreateChatSession(tenant, convID, inboxID, accountID, payload.Sender.ID, phone, senderName)
+	if err != nil {
+		log.Printf("[CHATWOOT ERROR] Failed to load session: %v", err)
+		return fiber.Map{"status": "error"}
+	}
+
+	// If AI receptionist is disabled for this tenant or conversation is handed off to a human agent:
+	if !tenant.AIReceptionistEnabled || session.HumanHandover {
+		session.LastUserMessage = messageText
+		_ = db.Save(session).Error
+		return fiber.Map{"status": "skipped_human_active"}
 	}
 
 	// Deterministic Emergency Check before LLM
 	if isEmergency, category := DetectEmergency(messageText); isEmergency {
-		LogEmergencyDetected(tenantSlug, sessionID, category)
+		LogEmergencyDetected(tenant.Slug, session.SessionID, category)
 		emergMsg := EmergencyResponse(tenant, category)
+		session.HumanHandover = true
+		session.WorkflowState = "handed_off"
+		session.HandoverReason = "Emergency detected: " + string(category)
+		session.LastUserMessage = messageText
+		session.LastAIMessage = emergMsg
+		_ = db.Save(session).Error
+
 		_ = SendChatwootMessage(baseURL, apiToken, accountID, convID, emergMsg)
-		_ = SendChatwootPrivateNote(baseURL, apiToken, accountID, convID, fmt.Sprintf("🚨 [EMERGENCY DETECTED] Category: %s. Handing over to emergency staff.", category))
+		_ = SendChatwootPrivateNote(baseURL, apiToken, accountID, convID,
+			fmt.Sprintf("🚨 [EMERGENCY DETECTED] Category: %s. Phone: %s Name: %s. Immediate staff intervention required.", category, phone, senderName))
 		_ = ToggleChatwootConversationStatus(baseURL, apiToken, accountID, convID, "open")
-		return c.JSON(fiber.Map{"status": "emergency_handled"})
+		return fiber.Map{"status": "emergency_handled", "reply": emergMsg}
 	}
 
-	// Process message using Booka's conversation engine
-	replyText, confirmedApp := processChatwootMessage(tenant, sessionID, messageText, senderName, phone, convID)
+	// Deterministic Handover Keywords Check
+	lowerText := strings.ToLower(messageText)
+	keywords := strings.Split(tenant.HandoffKeywords, ",")
+	if len(keywords) == 0 || (len(keywords) == 1 && keywords[0] == "") {
+		keywords = []string{"human", "agent", "receptionist", "speak to someone"}
+	}
+	for _, kw := range keywords {
+		cleanKW := strings.TrimSpace(strings.ToLower(kw))
+		if cleanKW != "" && strings.Contains(lowerText, cleanKW) {
+			handoffMsg := fmt.Sprintf("I have notified our team at %s. A human representative will assist you here on WhatsApp shortly.", tenant.Name)
+			session.HumanHandover = true
+			session.WorkflowState = "handed_off"
+			session.HandoverReason = "Patient keyword match: " + cleanKW
+			session.LastUserMessage = messageText
+			session.LastAIMessage = handoffMsg
+			_ = db.Save(session).Error
+
+			_ = SendChatwootMessage(baseURL, apiToken, accountID, convID, handoffMsg)
+			_ = SendChatwootPrivateNote(baseURL, apiToken, accountID, convID,
+				fmt.Sprintf("👋 [Booka Bot Handover] Patient requested human support. Phone: %s Name: %s\nLast message: %s", phone, senderName, messageText))
+			_ = ToggleChatwootConversationStatus(baseURL, apiToken, accountID, convID, "open")
+			return fiber.Map{"status": "handoff_initiated", "reply": handoffMsg}
+		}
+	}
+
+	// Execute AI Agent & Tool-Calling Orchestration
+	replyText, confirmedApp, aiHandover, handoverReason := RunChatwootAIAgent(tenant, session, messageText)
+
+	if payload.ID > 0 {
+		session.LastProcessedMessageID = payload.ID
+	}
+	session.LastUserMessage = messageText
+	if replyText != "" {
+		session.LastAIMessage = replyText
+	}
+	_ = db.Save(session).Error
 
 	if replyText != "" {
 		if err := SendChatwootMessage(baseURL, apiToken, accountID, convID, replyText); err != nil {
@@ -265,170 +513,64 @@ func chatwootWebhookHandler(c *fiber.Ctx) error {
 		}
 	}
 
-	// If appointment was confirmed:
+	if aiHandover {
+		_ = SendChatwootPrivateNote(baseURL, apiToken, accountID, convID,
+			fmt.Sprintf("👋 [Booka AI Escalation] Reason: %s\nPhone: %s Name: %s", handoverReason, phone, senderName))
+		_ = ToggleChatwootConversationStatus(baseURL, apiToken, accountID, convID, "open")
+	}
+
 	if confirmedApp != nil {
 		_ = SendChatwootPrivateNote(baseURL, apiToken, accountID, convID,
-			fmt.Sprintf("✅ [Booka Bot] Appointment booked for %s with %s on %s at %s. Patient Phone: %s",
-				confirmedApp.PatientName, confirmedApp.Doctor, confirmedApp.Date, confirmedApp.Time, phone))
+			fmt.Sprintf("✅ [Booka Booking #%d] Confirmed for %s with %s on %s at %s. Phone: %s",
+				confirmedApp.ID, confirmedApp.PatientName, confirmedApp.Doctor, confirmedApp.Date, confirmedApp.Time, phone))
 
-		// If Google Calendar is configured, sync event
+		// Trigger Google Calendar Sync
 		if tenant.GoogleCalendarEnabled {
-			go func() {
-				_ = syncAppointmentToGoogleCalendar(tenant, confirmedApp)
-			}()
+			go func(t Tenant, ap Appointment) {
+				_ = syncAppointmentToGoogleCalendar(t, &ap)
+			}(tenant, *confirmedApp)
 		}
 	}
 
-	return c.JSON(fiber.Map{"status": "processed", "reply": replyText})
+	return fiber.Map{"status": "processed", "reply": replyText}
 }
 
-// processChatwootMessage encapsulates the core conversation state engine for WhatsApp
-func processChatwootMessage(tenant Tenant, sessionID, messageText, senderName, phone string, convID int) (string, *Appointment) {
-	convKey := fmt.Sprintf("%s:%s", tenant.Slug, sessionID)
-	unlock := acquireSessionLock(convKey)
-	defer unlock()
-
-	conv := getConversation(convKey)
-	if conv.Draft.PatientName == "" && senderName != "" {
-		conv.Draft.PatientName = senderName
+// listChatwootSessionsHandler lists active WhatsApp/Chatwoot sessions for the clinic admin dashboard
+func listChatwootSessionsHandler(c *fiber.Ctx) error {
+	tenantID, ok := c.Locals("tenant_id").(uint)
+	if !ok || tenantID == 0 {
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeTokenExpired, "tenant not found in token")
 	}
-	sourceWhatsApp := "whatsapp"
-	conv.Draft.Source = &sourceWhatsApp
-
-	lowerMessage := strings.ToLower(messageText)
-	tenantDoctors := tenantDoctorNames(tenant.ID)
-
-	// Confirmation flow
-	if conv.AwaitingConfirmation {
-		if isAffirmative(lowerMessage) {
-			finalReason := conv.Draft.Reason
-			if strings.TrimSpace(finalReason) == "" {
-				finalReason = "general consultation"
-			}
-			finalTime := normalizeTime(conv.Draft.Time)
-			finalApp := Appointment{
-				TenantID:               tenant.ID,
-				PatientName:            conv.Draft.PatientName,
-				PatientPhone:           phone,
-				Doctor:                 conv.Draft.Doctor,
-				Date:                   conv.Draft.Date,
-				Time:                   finalTime,
-				Reason:                 finalReason,
-				Status:                 StatusPending,
-				Source:                 &sourceWhatsApp,
-				ChatwootConversationID: &convID,
-			}
-
-			// Validate slot still free
-			slots, err := availableTimeSlots(tenant.ID, conv.Draft.Date, conv.Draft.Doctor)
-			slotAvailable := false
-			if err == nil {
-				for _, s := range slots {
-					if s == finalTime {
-						slotAvailable = true
-						break
-					}
-				}
-			}
-
-			if !slotAvailable {
-				reply := fmt.Sprintf("Sorry, %s at %s is no longer available. Available slots: %s. What time would you prefer?",
-					conv.Draft.Date, finalTime, strings.Join(slots, ", "))
-				conv.Draft.Time = ""
-				conv.Expecting = "time"
-				conv.AwaitingConfirmation = false
-				setConversation(convKey, conv)
-				return reply, nil
-			}
-
-			bErr := db.Transaction(func(tx *gorm.DB) error {
-				_, bErr := bookSlot(tx, tenant.ID, &finalApp)
-				return bErr
-			})
-			if bErr != nil {
-				reply := fmt.Sprintf("Sorry, that slot was just taken. Please suggest another time.")
-				conv.Draft.Time = ""
-				conv.Expecting = "time"
-				conv.AwaitingConfirmation = false
-				setConversation(convKey, conv)
-				return reply, nil
-			}
-
-			reply := fmt.Sprintf("Great! Your appointment with %s on %s at %s for %s is confirmed, %s. See you then!",
-				finalApp.Doctor, finalApp.Date, finalApp.Time, finalApp.Reason, finalApp.PatientName)
-			setConversation(convKey, ConversationState{})
-			return reply, &finalApp
-		}
-
-		if isNegative(lowerMessage) {
-			conv.AwaitingConfirmation = false
-			setConversation(convKey, conv)
-			return "No problem! What would you like to change? (doctor, date, or time)", nil
-		}
-
-		conv.AwaitingConfirmation = false
+	var sessions []ChatSession
+	if err := db.Where("tenant_id = ?", tenantID).Order("updated_at DESC").Limit(50).Find(&sessions).Error; err != nil {
+		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "failed to load WhatsApp sessions")
 	}
-
-	// Extract answers based on expectation
-	if conv.Expecting != "" {
-		if handled, reply := applyExpectedAnswer(&conv, messageText, tenantDoctors); handled {
-			if conv.Draft.PatientName != "" && conv.Draft.Doctor != "" &&
-				isValidDate(conv.Draft.Date) && isValidTime(conv.Draft.Time) {
-				if conv.Draft.Reason == "" {
-					conv.Expecting = "reason"
-					setConversation(convKey, conv)
-					return fmt.Sprintf("Perfect! What is the reason for your visit with %s on %s at %s?",
-						conv.Draft.Doctor, conv.Draft.Date, conv.Draft.Time), nil
-				}
-				conv.AwaitingConfirmation = true
-				conv.Expecting = ""
-				setConversation(convKey, conv)
-				return fmt.Sprintf("I have your appointment with %s on %s at %s for %s. Does that look right? Please reply Yes to confirm.",
-					conv.Draft.Doctor, conv.Draft.Date, conv.Draft.Time, conv.Draft.Reason), nil
-			}
-			setConversation(convKey, conv)
-			return reply, nil
-		}
-	}
-
-	// Freeform intent extraction
-	draftApp, reply, err := AskForAppointmentFromMessage(getEnv("GROQ_MODEL", "openai/gpt-oss-120b"), messageText, conv)
-	if err == nil && draftApp.Doctor != "" {
-		if draftApp.Doctor != "" {
-			conv.Draft.Doctor = draftApp.Doctor
-		}
-		if draftApp.Date != "" {
-			conv.Draft.Date = draftApp.Date
-		}
-		if draftApp.Time != "" {
-			conv.Draft.Time = draftApp.Time
-		}
-		if draftApp.PatientName != "" {
-			conv.Draft.PatientName = draftApp.PatientName
-		}
-		if draftApp.Reason != "" {
-			conv.Draft.Reason = draftApp.Reason
-		}
-
-		if conv.Draft.PatientName != "" && conv.Draft.Doctor != "" &&
-			isValidDate(conv.Draft.Date) && isValidTime(conv.Draft.Time) {
-			conv.AwaitingConfirmation = true
-			setConversation(convKey, conv)
-			return fmt.Sprintf("I have your appointment with %s on %s at %s for %s. Shall I confirm this for you?",
-				conv.Draft.Doctor, conv.Draft.Date, conv.Draft.Time, conv.Draft.Reason), nil
-		}
-	}
-
-	// Conversational fallback
-	if reply == "" {
-		reply, _ = AskConversationalReply(getEnv("GROQ_MODEL", "openai/gpt-oss-120b"), messageText, conv)
-	}
-	if reply == "" {
-		reply = "Hello! I can help you schedule a doctor appointment. Which doctor or specialty are you looking for?"
-	}
-
-	conv.LastUserMessage = messageText
-	conv.LastAIMessage = reply
-	setConversation(convKey, conv)
-	return reply, nil
+	return c.JSON(sessions)
 }
+
+// resumeChatwootAISessionHandler allows an authorized clinic agent to re-enable AI assistance after human handover
+func resumeChatwootAISessionHandler(c *fiber.Ctx) error {
+	tenantID, ok := c.Locals("tenant_id").(uint)
+	if !ok || tenantID == 0 {
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeTokenExpired, "tenant not found in token")
+	}
+	sessionID := strings.TrimSpace(c.Params("sessionID"))
+	if sessionID == "" {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "missing sessionID")
+	}
+	var session ChatSession
+	if err := db.Where("session_id = ? AND tenant_id = ?", sessionID, tenantID).First(&session).Error; err != nil {
+		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "session not found")
+	}
+
+	session.HumanHandover = false
+	session.AIEnabled = true
+	session.WorkflowState = "initial"
+	session.HandoverReason = ""
+	if err := db.Save(&session).Error; err != nil {
+		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "failed to resume AI session")
+	}
+
+	return c.JSON(session)
+}
+

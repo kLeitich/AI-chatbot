@@ -486,12 +486,33 @@ func updateAppointment(c *fiber.Ctx) error {
 		}
 	}
 
-	if ap.Status == StatusCancelled && ap.GoogleEventID != "" {
-		var tenant Tenant
-		if err := db.First(&tenant, tenantID).Error; err == nil {
+	var tenant Tenant
+	if err := db.First(&tenant, tenantID).Error; err == nil {
+		if ap.Status == StatusCancelled && ap.GoogleEventID != "" {
 			go func(eID string) {
 				_ = deleteGoogleCalendarEvent(tenant, eID, "")
 			}(ap.GoogleEventID)
+		} else if slotChanged && tenant.GoogleCalendarEnabled {
+			go func(t Tenant, app Appointment) {
+				_ = syncAppointmentToGoogleCalendar(t, &app)
+			}(tenant, ap)
+		}
+
+		// Notify WhatsApp patient via Chatwoot on admin changes
+		if ap.ChatwootConversationID != nil && *ap.ChatwootConversationID > 0 {
+			var waMsg string
+			if ap.Status == StatusCancelled {
+				waMsg = fmt.Sprintf("❌ Your appointment with %s on %s at %s at %s has been cancelled. Reply here if you'd like to rebook.", ap.Doctor, ap.Date, ap.Time, tenant.Name)
+			} else if slotChanged {
+				waMsg = fmt.Sprintf("🔄 Your appointment at %s has been rescheduled to %s on %s at %s.", tenant.Name, ap.Doctor, ap.Date, ap.Time)
+			} else if in.Status == StatusConfirmed {
+				waMsg = fmt.Sprintf("✅ Your appointment with %s on %s at %s at %s has been confirmed.", ap.Doctor, ap.Date, ap.Time, tenant.Name)
+			}
+			if waMsg != "" {
+				go func(t Tenant, app Appointment, m string) {
+					_ = SendAppointmentNotificationWhatsApp(t, &app, m)
+				}(tenant, ap, waMsg)
+			}
 		}
 	}
 
@@ -526,14 +547,17 @@ func deleteAppointment(c *fiber.Ctx) error {
 }
 
 type createDoctorRequest struct {
-	Name             string `json:"name"`
-	Specialty        string `json:"specialty"`
-	Bio              string `json:"bio"`
-	WorkDays         string `json:"work_days"`
-	WorkStart        string `json:"work_start"`
-	WorkEnd          string `json:"work_end"`
-	SlotMinutes      int    `json:"slot_minutes"`
-	GoogleCalendarID string `json:"google_calendar_id"`
+	Name             string  `json:"name"`
+	Specialty        string  `json:"specialty"`
+	Bio              string  `json:"bio"`
+	WorkDays         string  `json:"work_days"`
+	WorkStart        string  `json:"work_start"`
+	WorkEnd          string  `json:"work_end"`
+	SlotMinutes      int     `json:"slot_minutes"`
+	ConsultationFee  float64 `json:"consultation_fee"`
+	BranchID         *uint   `json:"branch_id"`
+	BranchName       string  `json:"branch_name"`
+	GoogleCalendarID string  `json:"google_calendar_id"`
 }
 
 type createReasonRequest struct {
@@ -565,15 +589,18 @@ func listDoctors(c *fiber.Ctx) error {
 }
 
 type patchDoctorRequest struct {
-	Name             *string `json:"name"`
-	Specialty        *string `json:"specialty"`
-	Bio              *string `json:"bio"`
-	WorkDays         *string `json:"work_days"`
-	WorkStart        *string `json:"work_start"`
-	WorkEnd          *string `json:"work_end"`
-	SlotMinutes      *int    `json:"slot_minutes"`
-	Active           *bool   `json:"active"`
-	GoogleCalendarID *string `json:"google_calendar_id"`
+	Name             *string  `json:"name"`
+	Specialty        *string  `json:"specialty"`
+	Bio              *string  `json:"bio"`
+	WorkDays         *string  `json:"work_days"`
+	WorkStart        *string  `json:"work_start"`
+	WorkEnd          *string  `json:"work_end"`
+	SlotMinutes      *int     `json:"slot_minutes"`
+	Active           *bool    `json:"active"`
+	ConsultationFee  *float64 `json:"consultation_fee"`
+	BranchID         *uint    `json:"branch_id"`
+	BranchName       *string  `json:"branch_name"`
+	GoogleCalendarID *string  `json:"google_calendar_id"`
 }
 
 type patchReasonRequest struct {
@@ -673,6 +700,20 @@ func patchDoctor(c *fiber.Ctx) error {
 		doc.Active = *req.Active
 	}
 
+	if req.ConsultationFee != nil && *req.ConsultationFee >= 0 {
+		doc.ConsultationFee = *req.ConsultationFee
+	}
+	if req.BranchID != nil {
+		doc.BranchID = req.BranchID
+		var branch Branch
+		if err := db.Where("id = ? AND tenant_id = ?", *req.BranchID, tenantID).First(&branch).Error; err == nil {
+			doc.BranchName = branch.Name
+		}
+	}
+	if req.BranchName != nil {
+		doc.BranchName = strings.TrimSpace(*req.BranchName)
+	}
+
 	if req.GoogleCalendarID != nil {
 		doc.GoogleCalendarID = strings.TrimSpace(*req.GoogleCalendarID)
 	}
@@ -727,16 +768,27 @@ func createDoctor(c *fiber.Ctx) error {
 		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "slot_minutes must be between 10 and 120")
 	}
 
+	branchName := strings.TrimSpace(req.BranchName)
+	if req.BranchID != nil && branchName == "" {
+		var branch Branch
+		if err := db.Where("id = ? AND tenant_id = ?", *req.BranchID, tenantID).First(&branch).Error; err == nil {
+			branchName = branch.Name
+		}
+	}
+
 	doctor := Doctor{
-		TenantID:    tenantID,
-		Name:        strings.TrimSpace(req.Name),
-		Specialty:   strings.TrimSpace(req.Specialty),
-		Bio:         strings.TrimSpace(req.Bio),
-		WorkDays:    workDays,
-		WorkStart:   workStart,
-		WorkEnd:     workEnd,
+		TenantID:         tenantID,
+		Name:             strings.TrimSpace(req.Name),
+		Specialty:        strings.TrimSpace(req.Specialty),
+		Bio:              strings.TrimSpace(req.Bio),
+		WorkDays:         workDays,
+		WorkStart:        workStart,
+		WorkEnd:          workEnd,
 		SlotMinutes:      slotMins,
 		Active:           true,
+		ConsultationFee:  req.ConsultationFee,
+		BranchID:         req.BranchID,
+		BranchName:       branchName,
 		GoogleCalendarID: strings.TrimSpace(req.GoogleCalendarID),
 	}
 
@@ -929,6 +981,21 @@ type TenantSettingsRequest struct {
 	ClerkEnabled        *bool   `json:"clerk_enabled"`
 	ClerkPublishableKey *string `json:"clerk_publishable_key"`
 	ClerkSecretKey      *string `json:"clerk_secret_key"`
+
+	// Provider Profile & Omnichannel AI Preferences
+	ProviderType          *string `json:"provider_type"`
+	Description           *string `json:"description"`
+	LogoURL               *string `json:"logo_url"`
+	Address               *string `json:"address"`
+	Phone                 *string `json:"phone"`
+	WhatsAppNumber        *string `json:"whatsapp_number"`
+	BusinessHours         *string `json:"business_hours"`
+	CancellationPolicy    *string `json:"cancellation_policy"`
+	ReschedulingPolicy    *string `json:"rescheduling_policy"`
+	Timezone              *string `json:"timezone"`
+	AIReceptionistEnabled *bool   `json:"ai_receptionist_enabled"`
+	MarketplaceEnabled    *bool   `json:"marketplace_enabled"`
+	HandoffKeywords       *string `json:"handoff_keywords"`
 }
 
 type TenantSettingsResponse struct {
@@ -957,6 +1024,21 @@ type TenantSettingsResponse struct {
 	ClerkEnabled        bool   `json:"clerk_enabled"`
 	ClerkPublishableKey string `json:"clerk_publishable_key,omitempty"`
 	ClerkSecretKey      string `json:"clerk_secret_key,omitempty"`
+
+	// Provider Profile & Omnichannel AI Preferences
+	ProviderType          string `json:"provider_type,omitempty"`
+	Description           string `json:"description,omitempty"`
+	LogoURL               string `json:"logo_url,omitempty"`
+	Address               string `json:"address,omitempty"`
+	Phone                 string `json:"phone,omitempty"`
+	WhatsAppNumber        string `json:"whatsapp_number,omitempty"`
+	BusinessHours         string `json:"business_hours,omitempty"`
+	CancellationPolicy    string `json:"cancellation_policy,omitempty"`
+	ReschedulingPolicy    string `json:"rescheduling_policy,omitempty"`
+	Timezone              string `json:"timezone,omitempty"`
+	AIReceptionistEnabled bool   `json:"ai_receptionist_enabled"`
+	MarketplaceEnabled    bool   `json:"marketplace_enabled"`
+	HandoffKeywords       string `json:"handoff_keywords,omitempty"`
 }
 
 type TenantPublicConfigResponse struct {
@@ -1090,14 +1172,8 @@ func validateOrigin(raw string, isDev bool) (string, error) {
 	return fmt.Sprintf("https://%s", host), nil
 }
 
-func getTenantSettingsHandler(c *fiber.Ctx) error {
-	tenantSlug := c.Params("tenant")
-	var tenant Tenant
-	if err := db.Where("slug = ?", tenantSlug).First(&tenant).Error; err != nil {
-		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "tenant not found")
-	}
-
-	return c.JSON(TenantSettingsResponse{
+func buildTenantSettingsResponse(tenant Tenant) TenantSettingsResponse {
+	return TenantSettingsResponse{
 		EmergencyNumber:     tenant.EmergencyNumber,
 		EmergencyMessage:    tenant.EmergencyMessage,
 		BookingLinkEnabled:  tenant.BookingLinkEnabled,
@@ -1120,7 +1196,31 @@ func getTenantSettingsHandler(c *fiber.Ctx) error {
 		ClerkEnabled:        tenant.ClerkEnabled,
 		ClerkPublishableKey: tenant.ClerkPublishableKey,
 		ClerkSecretKey:      tenant.ClerkSecretKey,
-	})
+
+		ProviderType:          tenant.ProviderType,
+		Description:           tenant.Description,
+		LogoURL:               tenant.LogoURL,
+		Address:               tenant.Address,
+		Phone:                 tenant.Phone,
+		WhatsAppNumber:        tenant.WhatsAppNumber,
+		BusinessHours:         tenant.BusinessHours,
+		CancellationPolicy:    tenant.CancellationPolicy,
+		ReschedulingPolicy:    tenant.ReschedulingPolicy,
+		Timezone:              tenant.Timezone,
+		AIReceptionistEnabled: tenant.AIReceptionistEnabled,
+		MarketplaceEnabled:    tenant.MarketplaceEnabled,
+		HandoffKeywords:       tenant.HandoffKeywords,
+	}
+}
+
+func getTenantSettingsHandler(c *fiber.Ctx) error {
+	tenantSlug := c.Params("tenant")
+	var tenant Tenant
+	if err := db.Where("slug = ?", tenantSlug).First(&tenant).Error; err != nil {
+		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "tenant not found")
+	}
+
+	return c.JSON(buildTenantSettingsResponse(tenant))
 }
 
 func updateTenantSettingsHandler(c *fiber.Ctx) error {
@@ -1244,6 +1344,47 @@ func updateTenantSettingsHandler(c *fiber.Ctx) error {
 		tenant.ClerkSecretKey = strings.TrimSpace(*req.ClerkSecretKey)
 	}
 
+	// Provider Profile & Omnichannel AI settings
+	if req.ProviderType != nil {
+		tenant.ProviderType = strings.TrimSpace(*req.ProviderType)
+	}
+	if req.Description != nil {
+		tenant.Description = stripControlChars(*req.Description)
+	}
+	if req.LogoURL != nil {
+		tenant.LogoURL = strings.TrimSpace(*req.LogoURL)
+	}
+	if req.Address != nil {
+		tenant.Address = strings.TrimSpace(*req.Address)
+	}
+	if req.Phone != nil {
+		tenant.Phone = strings.TrimSpace(*req.Phone)
+	}
+	if req.WhatsAppNumber != nil {
+		tenant.WhatsAppNumber = strings.TrimSpace(*req.WhatsAppNumber)
+	}
+	if req.BusinessHours != nil {
+		tenant.BusinessHours = strings.TrimSpace(*req.BusinessHours)
+	}
+	if req.CancellationPolicy != nil {
+		tenant.CancellationPolicy = stripControlChars(*req.CancellationPolicy)
+	}
+	if req.ReschedulingPolicy != nil {
+		tenant.ReschedulingPolicy = stripControlChars(*req.ReschedulingPolicy)
+	}
+	if req.Timezone != nil {
+		tenant.Timezone = strings.TrimSpace(*req.Timezone)
+	}
+	if req.AIReceptionistEnabled != nil {
+		tenant.AIReceptionistEnabled = *req.AIReceptionistEnabled
+	}
+	if req.MarketplaceEnabled != nil {
+		tenant.MarketplaceEnabled = *req.MarketplaceEnabled
+	}
+	if req.HandoffKeywords != nil {
+		tenant.HandoffKeywords = strings.TrimSpace(*req.HandoffKeywords)
+	}
+
 	if err := db.Save(&tenant).Error; err != nil {
 		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "failed to update settings")
 	}
@@ -1252,30 +1393,106 @@ func updateTenantSettingsHandler(c *fiber.Ctx) error {
 	role, _ := c.Locals("role").(string)
 	recordAuditLog(userID, role, tenant.ID, "update", "settings", tenant.ID, c.IP())
 
-	return c.JSON(TenantSettingsResponse{
-		EmergencyNumber:     tenant.EmergencyNumber,
-		EmergencyMessage:    tenant.EmergencyMessage,
-		BookingLinkEnabled:  tenant.BookingLinkEnabled,
-		AllowedEmbedOrigins: tenant.GetAllowedEmbedOrigins(),
-		PrivacyURL:          tenant.PrivacyURL,
+	return c.JSON(buildTenantSettingsResponse(tenant))
+}
 
-		ChatwootEnabled:       tenant.ChatwootEnabled,
-		ChatwootBaseURL:       tenant.ChatwootBaseURL,
-		ChatwootAPIToken:      tenant.ChatwootAPIToken,
-		ChatwootAccountID:     tenant.ChatwootAccountID,
-		ChatwootInboxID:       tenant.ChatwootInboxID,
-		ChatwootWebhookSecret: tenant.ChatwootWebhookSecret,
+// Branch management handlers for multi-location providers
+func listBranchesHandler(c *fiber.Ctx) error {
+	tenantSlug := strings.TrimSpace(c.Params("tenant"))
+	var tenant Tenant
+	if err := db.Where("slug = ?", tenantSlug).First(&tenant).Error; err != nil {
+		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "tenant not found")
+	}
+	query := db.Where("tenant_id = ?", tenant.ID)
+	if !strings.Contains(c.Path(), "/admin/") {
+		query = query.Where("active = ?", true)
+	}
+	var branches []Branch
+	if err := query.Order("name ASC").Find(&branches).Error; err != nil {
+		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "failed to list branches")
+	}
+	return c.JSON(branches)
+}
 
-		GoogleCalendarEnabled: tenant.GoogleCalendarEnabled,
-		GoogleCalendarID:      tenant.GoogleCalendarID,
-		GoogleCalendarToken:   tenant.GoogleCalendarToken,
-		GoogleClientID:        tenant.GoogleClientID,
-		GoogleClientSecret:    tenant.GoogleClientSecret,
+func createBranchHandler(c *fiber.Ctx) error {
+	tenantID, ok := c.Locals("tenant_id").(uint)
+	if !ok || tenantID == 0 {
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeTokenExpired, "tenant not found in token")
+	}
+	var req struct {
+		Name    string `json:"name"`
+		Address string `json:"address"`
+		Phone   string `json:"phone"`
+	}
+	if err := c.BodyParser(&req); err != nil || strings.TrimSpace(req.Name) == "" {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "branch name is required")
+	}
+	branch := Branch{
+		TenantID: tenantID,
+		Name:     strings.TrimSpace(req.Name),
+		Address:  strings.TrimSpace(req.Address),
+		Phone:    strings.TrimSpace(req.Phone),
+		Active:   true,
+	}
+	if err := db.Create(&branch).Error; err != nil {
+		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "failed to create branch")
+	}
+	return c.Status(fiber.StatusCreated).JSON(branch)
+}
 
-		ClerkEnabled:        tenant.ClerkEnabled,
-		ClerkPublishableKey: tenant.ClerkPublishableKey,
-		ClerkSecretKey:      tenant.ClerkSecretKey,
-	})
+func patchBranchHandler(c *fiber.Ctx) error {
+	tenantID, ok := c.Locals("tenant_id").(uint)
+	if !ok || tenantID == 0 {
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeTokenExpired, "tenant not found in token")
+	}
+	branchID, err := c.ParamsInt("id")
+	if err != nil || branchID <= 0 {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "invalid branch id")
+	}
+	var branch Branch
+	if err := db.Where("id = ? AND tenant_id = ?", branchID, tenantID).First(&branch).Error; err != nil {
+		return sendError(c, fiber.StatusNotFound, ErrCodeNotFound, "branch not found")
+	}
+	var req struct {
+		Name    *string `json:"name"`
+		Address *string `json:"address"`
+		Phone   *string `json:"phone"`
+		Active  *bool   `json:"active"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "invalid request body")
+	}
+	if req.Name != nil && strings.TrimSpace(*req.Name) != "" {
+		branch.Name = strings.TrimSpace(*req.Name)
+	}
+	if req.Address != nil {
+		branch.Address = strings.TrimSpace(*req.Address)
+	}
+	if req.Phone != nil {
+		branch.Phone = strings.TrimSpace(*req.Phone)
+	}
+	if req.Active != nil {
+		branch.Active = *req.Active
+	}
+	if err := db.Save(&branch).Error; err != nil {
+		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "failed to update branch")
+	}
+	return c.JSON(branch)
+}
+
+func deleteBranchHandler(c *fiber.Ctx) error {
+	tenantID, ok := c.Locals("tenant_id").(uint)
+	if !ok || tenantID == 0 {
+		return sendError(c, fiber.StatusUnauthorized, ErrCodeTokenExpired, "tenant not found in token")
+	}
+	branchID, err := c.ParamsInt("id")
+	if err != nil || branchID <= 0 {
+		return sendError(c, fiber.StatusBadRequest, ErrCodeValidationError, "invalid branch id")
+	}
+	if err := db.Where("id = ? AND tenant_id = ?", branchID, tenantID).Delete(&Branch{}).Error; err != nil {
+		return sendError(c, fiber.StatusInternalServerError, ErrCodeServerError, "failed to delete branch")
+	}
+	return c.SendStatus(fiber.StatusNoContent)
 }
 
 func getTenantPublicConfigHandler(c *fiber.Ctx) error {

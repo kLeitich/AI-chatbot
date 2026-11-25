@@ -9,14 +9,20 @@ import (
 )
 
 type TenantSummary struct {
-	ID               uint      `json:"id"`
-	Slug             string    `json:"slug"`
-	Name             string    `json:"name"`
-	EmergencyNumber  string    `json:"emergency_number,omitempty"`
-	EmergencyMessage string    `json:"emergency_message,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UserCount        int64     `json:"user_count"`
-	AppointmentCount int64     `json:"appointment_count"`
+	ID                    uint      `json:"id"`
+	Slug                  string    `json:"slug"`
+	Name                  string    `json:"name"`
+	ProviderType          string    `json:"provider_type,omitempty"`
+	WhatsAppNumber        string    `json:"whatsapp_number,omitempty"`
+	ChatwootEnabled       bool      `json:"chatwoot_enabled"`
+	ChatwootInboxID       int       `json:"chatwoot_inbox_id,omitempty"`
+	AIReceptionistEnabled bool      `json:"ai_receptionist_enabled"`
+	MarketplaceEnabled    bool      `json:"marketplace_enabled"`
+	EmergencyNumber       string    `json:"emergency_number,omitempty"`
+	EmergencyMessage      string    `json:"emergency_message,omitempty"`
+	CreatedAt             time.Time `json:"created_at"`
+	UserCount             int64     `json:"user_count"`
+	AppointmentCount      int64     `json:"appointment_count"`
 }
 
 func recordAuditLog(actorUserID uint, actorRole string, tenantID uint, action, entity string, entityID uint, ip string) {
@@ -56,14 +62,20 @@ func listPlatformTenants(c *fiber.Ctx) error {
 		db.Model(&Appointment{}).Where("tenant_id = ?", t.ID).Count(&aCount)
 
 		summaries[i] = TenantSummary{
-			ID:               t.ID,
-			Slug:             t.Slug,
-			Name:             t.Name,
-			EmergencyNumber:  t.EmergencyNumber,
-			EmergencyMessage: t.EmergencyMessage,
-			CreatedAt:        t.CreatedAt,
-			UserCount:        uCount,
-			AppointmentCount: aCount,
+			ID:                    t.ID,
+			Slug:                  t.Slug,
+			Name:                  t.Name,
+			ProviderType:          t.ProviderType,
+			WhatsAppNumber:        t.WhatsAppNumber,
+			ChatwootEnabled:       t.ChatwootEnabled,
+			ChatwootInboxID:       t.ChatwootInboxID,
+			AIReceptionistEnabled: t.AIReceptionistEnabled,
+			MarketplaceEnabled:    t.MarketplaceEnabled,
+			EmergencyNumber:       t.EmergencyNumber,
+			EmergencyMessage:      t.EmergencyMessage,
+			CreatedAt:             t.CreatedAt,
+			UserCount:             uCount,
+			AppointmentCount:      aCount,
 		}
 	}
 
