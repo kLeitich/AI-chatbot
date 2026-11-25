@@ -254,6 +254,13 @@ func bookSlot(tx *gorm.DB, tenantID uint, app *Appointment) ([]string, error) {
 	}
 	app.DoctorID = &doc.ID
 	app.Doctor = doc.Name // Standardise doctor name to DB record
+	if app.BranchID == nil && doc.BranchID != nil {
+		app.BranchID = doc.BranchID
+		app.BranchName = doc.BranchName
+	}
+	if app.ConsultationFee == 0 && doc.ConsultationFee > 0 {
+		app.ConsultationFee = doc.ConsultationFee
+	}
 
 	// 2. Reject past date/time (Africa/Nairobi)
 	if !isValidDate(app.Date) {

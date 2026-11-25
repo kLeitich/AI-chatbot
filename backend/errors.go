@@ -17,6 +17,7 @@ const (
 	ErrCodeValidationError  = "VALIDATION_ERROR"
 	ErrCodeNotFound         = "NOT_FOUND"
 	ErrCodeServerError      = "SERVER_ERROR"
+	ErrCodeExternalError    = "EXTERNAL_ERROR"
 	ErrCodeBookingDisabled  = "BOOKING_DISABLED"
 )
 
