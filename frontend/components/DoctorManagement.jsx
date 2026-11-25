@@ -10,6 +10,7 @@ export default function DoctorManagement({ tenant = 'default' }) {
   const canViewDoctors = can('doctors.view') || canManageDoctors
 
   const [doctors, setDoctors] = useState([])
+  const [branches, setBranches] = useState([])
   const [loading, setLoading] = useState(false)
   const [editingDoctor, setEditingDoctor] = useState(null)
   const [doctorForm, setDoctorForm] = useState({
@@ -20,6 +21,9 @@ export default function DoctorManagement({ tenant = 'default' }) {
     work_start: '09:00',
     work_end: '17:00',
     slot_minutes: 30,
+    consultation_fee: 0,
+    branch_id: '',
+    branch_name: '',
     google_calendar_id: '',
   })
   const [doctorMsg, setDoctorMsg] = useState({ error: '', success: '' })
@@ -28,8 +32,12 @@ export default function DoctorManagement({ tenant = 'default' }) {
     if (!canViewDoctors) return
     setLoading(true)
     try {
-      const res = await api.get(`/t/${tenant}/admin/doctors`)
-      setDoctors(res.data || [])
+      const [docRes, branchRes] = await Promise.all([
+        api.get(`/t/${tenant}/admin/doctors`),
+        api.get(`/t/${tenant}/branches`).catch(() => ({ data: [] })),
+      ])
+      setDoctors(docRes.data || [])
+      setBranches(branchRes.data || [])
     } catch (err) {
       setDoctorMsg({ error: err?.response?.data?.message || 'Failed to load doctors', success: '' })
     } finally {
@@ -52,11 +60,16 @@ export default function DoctorManagement({ tenant = 'default' }) {
     }
 
     try {
+      const payload = {
+        ...doctorForm,
+        consultation_fee: Number(doctorForm.consultation_fee) || 0,
+        branch_id: doctorForm.branch_id ? Number(doctorForm.branch_id) : null,
+      }
       if (editingDoctor) {
-        await api.patch(`/t/${tenant}/admin/doctors/${editingDoctor.id}`, doctorForm)
+        await api.patch(`/t/${tenant}/admin/doctors/${editingDoctor.id}`, payload)
         setDoctorMsg({ error: '', success: 'Doctor updated successfully!' })
       } else {
-        await api.post(`/t/${tenant}/admin/doctors`, doctorForm)
+        await api.post(`/t/${tenant}/admin/doctors`, payload)
         setDoctorMsg({ error: '', success: 'Doctor added successfully!' })
       }
 
@@ -69,6 +82,9 @@ export default function DoctorManagement({ tenant = 'default' }) {
         work_start: '09:00',
         work_end: '17:00',
         slot_minutes: 30,
+        consultation_fee: 0,
+        branch_id: '',
+        branch_name: '',
         google_calendar_id: '',
       })
       fetchDoctors()
@@ -88,6 +104,9 @@ export default function DoctorManagement({ tenant = 'default' }) {
       work_start: doc.work_start || '09:00',
       work_end: doc.work_end || '17:00',
       slot_minutes: doc.slot_minutes || 30,
+      consultation_fee: doc.consultation_fee || 0,
+      branch_id: doc.branch_id || '',
+      branch_name: doc.branch_name || '',
       google_calendar_id: doc.google_calendar_id || '',
     })
     setDoctorMsg({ error: '', success: '' })
@@ -252,6 +271,52 @@ export default function DoctorManagement({ tenant = 'default' }) {
             />
           </div>
 
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Consultation Fee (KES / USD)</label>
+              <input
+                type="number"
+                min={0}
+                placeholder="e.g. 2500"
+                className="w-full border rounded-lg p-2 text-sm bg-white"
+                value={doctorForm.consultation_fee}
+                onChange={(e) => setDoctorForm({ ...doctorForm, consultation_fee: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Hospital Branch / Wing</label>
+              {branches.length > 0 ? (
+                <select
+                  className="w-full border rounded-lg p-2 text-sm bg-white"
+                  value={doctorForm.branch_id}
+                  onChange={(e) => {
+                    const selected = branches.find((b) => String(b.id) === e.target.value)
+                    setDoctorForm({
+                      ...doctorForm,
+                      branch_id: e.target.value,
+                      branch_name: selected ? selected.name : '',
+                    })
+                  }}
+                >
+                  <option value="">Main Clinic / All Branches</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  placeholder="e.g. Westlands Wing"
+                  className="w-full border rounded-lg p-2 text-sm bg-white"
+                  value={doctorForm.branch_name}
+                  onChange={(e) => setDoctorForm({ ...doctorForm, branch_name: e.target.value })}
+                />
+              )}
+            </div>
+          </div>
+
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">
               Google Calendar ID (Optional - e.g. dr.smith@clinic.com)
@@ -335,6 +400,16 @@ export default function DoctorManagement({ tenant = 'default' }) {
                   <div>
                     <span className="font-medium text-slate-500">Hours:</span> {doc.work_start} - {doc.work_end} ({doc.slot_minutes || 30}m slots)
                   </div>
+                  {doc.consultation_fee > 0 && (
+                    <div>
+                      <span className="font-medium text-slate-500">Fee:</span> {doc.consultation_fee}
+                    </div>
+                  )}
+                  {doc.branch_name && (
+                    <div>
+                      <span className="font-medium text-slate-500">Branch:</span> {doc.branch_name}
+                    </div>
+                  )}
                 </div>
               </div>
 
