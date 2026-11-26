@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { getClerkFrontendApi, loadClerkSDK, initiateClerkGoogleAuth, checkAndSyncClerkSession, signOutClerkSession } from '../lib/clerkAuth'
+import {
+  getClerkFrontendApi,
+  loadClerkSDK,
+  initiateClerkGoogleAuth,
+  checkAndSyncClerkSession,
+  signOutClerkSession,
+} from '../lib/clerkAuth'
 import api from '../lib/api'
 
 const mockLoad = vi.fn()
@@ -8,6 +14,9 @@ const mockOpenSignUp = vi.fn()
 const mockAddListener = vi.fn()
 const mockSignOut = vi.fn()
 const mockGetToken = vi.fn()
+const mockSignInRedirect = vi.fn()
+const mockSignUpRedirect = vi.fn()
+const mockHandleRedirectCallback = vi.fn()
 
 let mockClerkInstance = null
 
@@ -25,9 +34,10 @@ vi.mock('@clerk/clerk-js', () => ({
       openSignUp: mockOpenSignUp,
       addListener: mockAddListener,
       signOut: mockSignOut,
+      handleRedirectCallback: mockHandleRedirectCallback,
       client: {
-        signIn: { authenticateWithRedirect: vi.fn() },
-        signUp: { authenticateWithRedirect: vi.fn() },
+        signIn: { authenticateWithRedirect: mockSignInRedirect },
+        signUp: { authenticateWithRedirect: mockSignUpRedirect },
       },
     }
     return mockClerkInstance
@@ -71,7 +81,23 @@ describe('clerkAuth bundled helper', () => {
     appendSpy.mockRestore()
   })
 
-  it('syncs existing active Clerk session directly without opening modal', async () => {
+  it('redirects directly to Google OAuth account chooser without intermediate Clerk modal', async () => {
+    mockLoad.mockResolvedValue(undefined)
+    const res = await initiateClerkGoogleAuth({
+      mode: 'signIn',
+      clerkPublishableKey: 'pk_test_ZGlyZWN0LWdvb2dsZS1yZWRpcmVjdCQ=',
+    })
+
+    expect(mockOpenSignIn).not.toHaveBeenCalled()
+    expect(mockSignInRedirect).toHaveBeenCalledWith({
+      strategy: 'oauth_google',
+      redirectUrl: 'http://localhost:3000/login?sso_callback=1',
+      redirectUrlComplete: 'http://localhost:3000/login?sso_complete=1',
+    })
+    expect(res).toEqual({ redirected: true })
+  })
+
+  it('syncs existing active Clerk session directly without redirect', async () => {
     mockGetToken.mockResolvedValue('clerk_jwt_123')
     mockLoad.mockImplementation(async () => {
       mockClerkInstance.session = { getToken: mockGetToken }
@@ -91,7 +117,7 @@ describe('clerkAuth bundled helper', () => {
       onSuccess,
     })
 
-    expect(mockOpenSignIn).not.toHaveBeenCalled()
+    expect(mockSignInRedirect).not.toHaveBeenCalled()
     expect(api.post).toHaveBeenCalledWith('/auth/clerk/sync', {
       token: 'clerk_jwt_123',
       company_name: 'Acme Clinic',
@@ -100,9 +126,10 @@ describe('clerkAuth bundled helper', () => {
     expect(onSuccess).toHaveBeenCalledWith(res)
   })
 
-  it('skips mount auto-sync when notice=session_ended and resumes on returning OAuth callback', async () => {
+  it('handles returning Google OAuth callback via handleRedirectCallback and ignores stale session_ended', async () => {
+    mockLoad.mockResolvedValue(undefined)
     mockGetToken.mockResolvedValue('clerk_jwt_return')
-    mockLoad.mockImplementation(async () => {
+    mockHandleRedirectCallback.mockImplementation(async () => {
       mockClerkInstance.session = { getToken: mockGetToken }
     })
 
@@ -112,7 +139,7 @@ describe('clerkAuth bundled helper', () => {
     })
     expect(skipped).toBeNull()
 
-    window.history.replaceState({}, '', '/login?__clerk_status=verified')
+    window.history.replaceState({}, '', '/login?sso_callback=1')
     api.post.mockResolvedValueOnce({
       data: {
         token: 'booka_jwt_return',
@@ -124,6 +151,7 @@ describe('clerkAuth bundled helper', () => {
     const synced = await checkAndSyncClerkSession({
       clerkPublishableKey: 'pk_test_c2Vzc2lvbi1lbmRlZCQ=',
     })
+    expect(mockHandleRedirectCallback).toHaveBeenCalled()
     expect(synced?.token).toBe('booka_jwt_return')
     expect(localStorage.getItem('token')).toBe('booka_jwt_return')
 

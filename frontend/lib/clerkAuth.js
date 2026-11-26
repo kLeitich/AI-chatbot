@@ -165,8 +165,11 @@ export async function initiateClerkGoogleAuth({
     throw err
   }
 
-  // Save sync context across potential same-tab OAuth redirects
-  const cleanReturnUrl = `${window.location.origin}${window.location.pathname}`
+  // Direct Google OAuth redirect flow: sends the user straight to Google Account Chooser
+  const baseReturnUrl = `${window.location.origin}${window.location.pathname}`
+  const callbackUrl = `${baseReturnUrl}?sso_callback=1`
+  const completeUrl = `${baseReturnUrl}?sso_complete=1`
+
   if (typeof window !== 'undefined') {
     try {
       sessionStorage.setItem(
@@ -189,52 +192,54 @@ export async function initiateClerkGoogleAuth({
     })
   }
 
-  // Try opening Clerk UI modal (bundled directly in @clerk/clerk-js v5)
+  if (onProgress) onProgress('Redirecting to Google...')
+
+  if (mode === 'signUp' && clerk.client?.signUp?.authenticateWithRedirect) {
+    await clerk.client.signUp.authenticateWithRedirect({
+      strategy: 'oauth_google',
+      redirectUrl: callbackUrl,
+      redirectUrlComplete: completeUrl,
+    })
+    return { redirected: true }
+  }
+
+  if (clerk.client?.signIn?.authenticateWithRedirect) {
+    await clerk.client.signIn.authenticateWithRedirect({
+      strategy: 'oauth_google',
+      redirectUrl: callbackUrl,
+      redirectUrlComplete: completeUrl,
+    })
+    return { redirected: true }
+  }
+
+  // Fallback to Clerk modal only if client.authenticateWithRedirect is unavailable
   let modalOpened = false
   try {
     if (mode === 'signUp' && typeof clerk.openSignUp === 'function') {
       clerk.openSignUp({
-        afterSignUpUrl: cleanReturnUrl,
-        afterSignInUrl: cleanReturnUrl,
-        fallbackRedirectUrl: cleanReturnUrl,
+        afterSignUpUrl: completeUrl,
+        afterSignInUrl: completeUrl,
+        fallbackRedirectUrl: completeUrl,
       })
       modalOpened = true
     } else if (typeof clerk.openSignIn === 'function') {
       clerk.openSignIn({
-        afterSignInUrl: cleanReturnUrl,
-        afterSignUpUrl: cleanReturnUrl,
-        fallbackRedirectUrl: cleanReturnUrl,
+        afterSignInUrl: completeUrl,
+        afterSignUpUrl: completeUrl,
+        fallbackRedirectUrl: completeUrl,
       })
       modalOpened = true
     }
   } catch (uiErr) {
-    console.warn('Clerk UI modal unavailable, falling back to direct Google OAuth redirect', uiErr)
+    console.warn('Clerk UI modal unavailable', uiErr)
     modalOpened = false
   }
 
-  // Fallback directly to Google OAuth redirect if modal did not open
   if (!modalOpened) {
-    if (onProgress) onProgress('Redirecting to Google...')
-    if (mode === 'signUp' && clerk.client?.signUp?.authenticateWithRedirect) {
-      await clerk.client.signUp.authenticateWithRedirect({
-        strategy: 'oauth_google',
-        redirectUrl: cleanReturnUrl,
-        redirectUrlComplete: cleanReturnUrl,
-      })
-      return null
-    }
-    if (clerk.client?.signIn?.authenticateWithRedirect) {
-      await clerk.client.signIn.authenticateWithRedirect({
-        strategy: 'oauth_google',
-        redirectUrl: cleanReturnUrl,
-        redirectUrlComplete: cleanReturnUrl,
-      })
-      return null
-    }
     throw new Error('Clerk Google SSO method unavailable')
   }
 
-  // Listen for session resolution inside modal or redirect cancellation
+  // Listen for session resolution inside fallback modal
   return new Promise((resolve, reject) => {
     let settled = false
     let unsubscribe = null
@@ -286,13 +291,11 @@ export async function initiateClerkGoogleAuth({
         return
       }
 
-      // Detect if user closed the Clerk modal without signing in
       if (typeof document !== 'undefined') {
         const modalEl = document.querySelector('.cl-modalBackdrop, .cl-cardBox, .cl-signIn-root, .cl-signUp-root')
         if (modalEl) {
           sawModalRendered = true
         } else if (sawModalRendered && attempts >= 3) {
-          // Modal was closed manually by user
           settled = true
           cleanup()
           if (onError) onError('')
@@ -312,7 +315,8 @@ export async function initiateClerkGoogleAuth({
 }
 
 /**
- * Checks if the user has returned from a Google/Clerk OAuth redirect and completes Booka session sync.
+ * Checks if the user has returned from a Google/Clerk OAuth redirect, handles the OAuth callback,
+ * and completes Booka session sync.
  */
 export async function checkAndSyncClerkSession({
   tenant = '',
@@ -332,11 +336,13 @@ export async function checkAndSyncClerkSession({
   if (!clerkKey) return null
 
   const params = new URLSearchParams(window.location.search)
-  const hasCallbackParams =
+  const isSSOCallback =
+    params.has('sso_callback') ||
     params.has('__clerk_status') ||
     params.has('__clerk_created_session') ||
     params.has('__clerk_handshake') ||
     window.location.hash.includes('sso-callback')
+  const isSSOComplete = params.has('sso_complete')
 
   let pendingSync = null
   let loggedOutFlag = false
@@ -351,17 +357,56 @@ export async function checkAndSyncClerkSession({
   const isSessionEndedNotice = params.get('notice') === 'session_ended' || params.get('session_ended')
 
   // Do not auto-relogin on mount after explicit logout unless returning from an active OAuth redirect
-  if ((isSessionEndedNotice || loggedOutFlag) && !pendingSync && !hasCallbackParams) {
+  if ((isSessionEndedNotice || loggedOutFlag) && !pendingSync && !isSSOCallback && !isSSOComplete) {
+    return null
+  }
+
+  // Only engage SDK on mount if returning from OAuth redirect or active pending flow
+  if (!pendingSync && !isSSOCallback && !isSSOComplete) {
     return null
   }
 
   try {
-    const clerk = await loadClerkSDK(clerkKey)
-    if (!clerk?.session) return null
+    const clerk = await loadClerkSDK(clerkKey, onProgress)
+    if (!clerk) return null
 
-    // Only auto-sync on mount if returning from OAuth redirect or active pending flow
-    if (!pendingSync && !hasCallbackParams) {
-      return null
+    const baseReturnUrl = `${window.location.origin}${window.location.pathname}`
+    const completeUrl = `${baseReturnUrl}?sso_complete=1`
+
+    // Handle returning Google OAuth callback to activate session & transfer signIn <-> signUp seamlessly
+    if (isSSOCallback && !clerk.session && typeof clerk.handleRedirectCallback === 'function') {
+      if (onProgress) onProgress('Completing Google sign-in...')
+      await clerk.handleRedirectCallback(
+        {
+          afterSignInUrl: completeUrl,
+          afterSignUpUrl: completeUrl,
+          signInForceRedirectUrl: completeUrl,
+          signUpForceRedirectUrl: completeUrl,
+          signInUrl: baseReturnUrl,
+          signUpUrl: baseReturnUrl,
+        },
+        async (to) => {
+          if (clerk.session) return
+          if (typeof to === 'string' && (to.includes('factor') || to.includes('verify') || to.includes('continue'))) {
+            if (pendingSync?.mode === 'signUp' && typeof clerk.openSignUp === 'function') {
+              clerk.openSignUp({ afterSignUpUrl: completeUrl })
+            } else if (typeof clerk.openSignIn === 'function') {
+              clerk.openSignIn({ afterSignInUrl: completeUrl })
+            }
+          }
+        }
+      )
+    }
+
+    if (!clerk.session) return null
+
+    // Clean sso query params from address bar before redirecting into dashboard
+    try {
+      if (isSSOCallback || isSSOComplete) {
+        window.history.replaceState({}, '', window.location.pathname)
+      }
+    } catch (e) {
+      // ignore
     }
 
     const companyName = pendingSync?.companyName || ''
