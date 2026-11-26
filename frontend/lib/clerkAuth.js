@@ -71,6 +71,14 @@ export async function loadClerkSDK(clerkPublishableKey = '', onProgress = null) 
       await clerk.load()
     }
 
+    if (!clerk.client || !clerk.environment) {
+      const fapi = clerk.frontendApi || getClerkFrontendApi(clerkKey) || 'Clerk API'
+      delete clerkInstances[clerkKey]
+      throw new Error(
+        `Cannot reach Clerk at https://${fapi}. Ensure DNS CNAME records for "${fapi}" are verified in Clerk Dashboard > Domains (or use a valid pk_test_ / pk_live_ key).`
+      )
+    }
+
     return clerk
   } catch (err) {
     delete clerkInstances[clerkKey]
@@ -194,22 +202,33 @@ export async function initiateClerkGoogleAuth({
 
   if (onProgress) onProgress('Redirecting to Google...')
 
-  if (mode === 'signUp' && clerk.client?.signUp?.authenticateWithRedirect) {
-    await clerk.client.signUp.authenticateWithRedirect({
-      strategy: 'oauth_google',
-      redirectUrl: callbackUrl,
-      redirectUrlComplete: completeUrl,
-    })
-    return { redirected: true }
-  }
+  try {
+    if (mode === 'signUp' && clerk.client?.signUp?.authenticateWithRedirect) {
+      await clerk.client.signUp.authenticateWithRedirect({
+        strategy: 'oauth_google',
+        redirectUrl: callbackUrl,
+        redirectUrlComplete: completeUrl,
+      })
+      return { redirected: true }
+    }
 
-  if (clerk.client?.signIn?.authenticateWithRedirect) {
-    await clerk.client.signIn.authenticateWithRedirect({
-      strategy: 'oauth_google',
-      redirectUrl: callbackUrl,
-      redirectUrlComplete: completeUrl,
-    })
-    return { redirected: true }
+    if (clerk.client?.signIn?.authenticateWithRedirect) {
+      await clerk.client.signIn.authenticateWithRedirect({
+        strategy: 'oauth_google',
+        redirectUrl: callbackUrl,
+        redirectUrlComplete: completeUrl,
+      })
+      return { redirected: true }
+    }
+  } catch (redirectErr) {
+    const fapi = clerk.frontendApi || getClerkFrontendApi(clerkPublishableKey || process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) || 'Clerk API'
+    const rawMsg = formatClerkError(redirectErr, 'Failed to start Google sign-in redirect')
+    const friendlyMsg =
+      rawMsg.toLowerCase().includes('network') || rawMsg.toLowerCase().includes('fetch')
+        ? `Cannot reach Clerk at https://${fapi}. Please verify your Clerk domain DNS CNAME records in Clerk Dashboard > Domains.`
+        : rawMsg
+    if (onError) onError(friendlyMsg)
+    throw new Error(friendlyMsg)
   }
 
   // Fallback to Clerk modal only if client.authenticateWithRedirect is unavailable

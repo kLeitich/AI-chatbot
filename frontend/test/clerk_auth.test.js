@@ -26,6 +26,8 @@ vi.mock('@clerk/clerk-js', () => ({
       publishableKey: key,
       loaded: false,
       session: null,
+      environment: {},
+      frontendApi: 'example.clerk.accounts.dev',
       load: async () => {
         await mockLoad(key)
         mockClerkInstance.loaded = true
