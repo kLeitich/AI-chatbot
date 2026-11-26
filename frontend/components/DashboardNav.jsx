@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import api from '../lib/api'
+import { signOutClerkSession } from '../lib/clerkAuth'
 
 export default function DashboardNav({ tenant, isPlatform = false }) {
   const router = useRouter()
@@ -14,9 +15,11 @@ export default function DashboardNav({ tenant, isPlatform = false }) {
   const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     localStorage.removeItem('token')
     localStorage.removeItem('tenant_id')
+    localStorage.removeItem('role')
+    await signOutClerkSession()
     router.replace(isPlatform ? '/platform/login' : `/t/${tenant}/login`)
   }
 

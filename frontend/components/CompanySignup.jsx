@@ -90,9 +90,10 @@ export default function CompanySignup() {
 
   const handleGoogleSignUp = async () => {
     setError('')
+    setSuccessMessage('')
     setLoading(true)
     try {
-      await initiateClerkGoogleAuth({
+      const result = await initiateClerkGoogleAuth({
         mode: 'signUp',
         companyName: formData.company_name,
         onProgress: (status) => setSuccessMessage(status),
@@ -104,11 +105,17 @@ export default function CompanySignup() {
           }, 800)
         },
         onError: (errMsg) => {
+          setSuccessMessage('')
           setError(errMsg)
           setLoading(false)
         },
       })
+      if (!result) {
+        setSuccessMessage('')
+        setLoading(false)
+      }
     } catch (err) {
+      setSuccessMessage('')
       setError(err?.message || 'Google sign-up failed')
       setLoading(false)
     }

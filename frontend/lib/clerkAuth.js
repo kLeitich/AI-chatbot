@@ -1,13 +1,28 @@
+import { Clerk } from '@clerk/clerk-js'
 import api from './api'
+
+const clerkInstances = {}
+
+function normalizeClerkKey(rawKey) {
+  if (!rawKey || typeof rawKey !== 'string') return ''
+  return rawKey.trim().replace(/^['"]|['"]$/g, '').trim()
+}
+
+function formatClerkError(err, fallbackMsg) {
+  const apiMsg = err?.errors?.[0]?.longMessage || err?.errors?.[0]?.message
+  const httpMsg = err?.response?.data?.message || err?.response?.data?.error
+  return apiMsg || httpMsg || err?.message || fallbackMsg
+}
 
 /**
  * Extracts the Clerk Frontend API domain from the publishable key.
  * e.g. pk_test_Y2xlcmsuZXhhbXBsZS5jb20k -> clerk.example.com
  */
 export function getClerkFrontendApi(publishableKey) {
-  if (!publishableKey) return null
+  const clean = normalizeClerkKey(publishableKey)
+  if (!clean) return null
   try {
-    const parts = publishableKey.split('_')
+    const parts = clean.split('_')
     if (parts.length >= 3) {
       const b64 = parts[2].replace(/-/g, '+').replace(/_/g, '/')
       const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), '=')
@@ -21,15 +36,16 @@ export function getClerkFrontendApi(publishableKey) {
 }
 
 /**
- * Loads the Clerk JS SDK and UI components dynamically.
+ * Loads and initializes the bundled Clerk JS SDK with built-in UI components.
  */
 export async function loadClerkSDK(clerkPublishableKey = '', onProgress = null) {
   if (typeof window === 'undefined') return null
 
-  const clerkKey =
+  const clerkKey = normalizeClerkKey(
     clerkPublishableKey ||
-    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||
-    window.CLERK_PUBLISHABLE_KEY
+      process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||
+      window.CLERK_PUBLISHABLE_KEY
+  )
 
   if (!clerkKey) {
     throw new Error(
@@ -37,248 +53,58 @@ export async function loadClerkSDK(clerkPublishableKey = '', onProgress = null) 
     )
   }
 
-  if (window.Clerk?.loaded) {
-    return window.Clerk
+  let clerk = clerkInstances[clerkKey]
+  if (clerk?.loaded) {
+    return clerk
   }
 
-  const frontendApi = getClerkFrontendApi(clerkKey)
+  if (onProgress) onProgress('Initializing Google authentication...')
 
-  // 1. Load Clerk UI bundle if not present to enable UI components (openSignIn, openSignUp)
-  if (!window.__internal_ClerkUICtor) {
-    await new Promise((resolve) => {
-      const uiScript = document.createElement('script')
-      uiScript.src = frontendApi
-        ? `https://${frontendApi}/npm/@clerk/ui@1/dist/ui.browser.js`
-        : 'https://cdn.jsdelivr.net/npm/@clerk/ui@latest/dist/ui.browser.js'
-      uiScript.async = true
-      uiScript.crossOrigin = 'anonymous'
-      uiScript.onload = () => resolve()
-      uiScript.onerror = () => {
-        // Continue even if UI bundle script fails - we have direct OAuth fallback
-        resolve()
-      }
-      document.head.appendChild(uiScript)
-    })
-  }
-
-  // 2. Load Clerk JS SDK core
-  if (!window.Clerk) {
-    if (onProgress) onProgress('Loading Google authentication...')
-    await new Promise((resolve, reject) => {
-      const script = document.createElement('script')
-      script.src = frontendApi
-        ? `https://${frontendApi}/npm/@clerk/clerk-js@5/dist/clerk.browser.js`
-        : 'https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js'
-      script.async = true
-      script.crossOrigin = 'anonymous'
-      script.setAttribute('data-clerk-publishable-key', clerkKey)
-      script.onload = () => resolve()
-      script.onerror = () => reject(new Error('Failed to load Clerk authentication library'))
-      document.head.appendChild(script)
-    })
-  }
-
-  if (!window.Clerk) {
-    throw new Error('Clerk SDK could not be initialized')
-  }
-
-  if (!window.Clerk.loaded) {
-    const loadOptions = { publishableKey: clerkKey }
-    if (window.__internal_ClerkUICtor) {
-      loadOptions.ui = { ClerkUI: window.__internal_ClerkUICtor }
-    }
-    await window.Clerk.load(loadOptions)
-  }
-
-  return window.Clerk
-}
-
-/**
- * Initiates Clerk authentication with Google and synchronizes the session with Booka.
- * Supports both modal presentation and fallback direct Google OAuth redirect.
- */
-export async function initiateClerkGoogleAuth({
-  mode = 'signIn', // 'signIn' or 'signUp'
-  tenant = '',
-  companyName = '',
-  clerkPublishableKey = '',
-  onProgress = null,
-  onSuccess = null,
-  onError = null,
-} = {}) {
-  const clerkKey =
-    clerkPublishableKey ||
-    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||
-    (typeof window !== 'undefined' ? window.CLERK_PUBLISHABLE_KEY : null)
-
-  if (!clerkKey) {
-    const errorMsg =
-      'Clerk SSO is not configured yet. Please set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY in your environment variables.'
-    if (onError) onError(errorMsg)
-    throw new Error(errorMsg)
-  }
-
-  let clerk = null
   try {
-    clerk = await loadClerkSDK(clerkKey, onProgress)
+    if (!clerk) {
+      clerk = new Clerk(clerkKey)
+      clerkInstances[clerkKey] = clerk
+      window.Clerk = clerk
+    }
+
+    if (!clerk.loaded) {
+      await clerk.load()
+    }
+
+    return clerk
   } catch (err) {
-    if (onError) onError(err.message)
-    throw err
+    delete clerkInstances[clerkKey]
+    const detailed = formatClerkError(
+      err,
+      'Failed to initialize Clerk authentication. Verify NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and domain settings.'
+    )
+    throw new Error(detailed)
   }
-
-  // Try opening UI modal first if UI components are present
-  let modalOpened = false
-  try {
-    if (window.__internal_ClerkUICtor || clerk.ui) {
-      if (mode === 'signUp' && typeof clerk.openSignUp === 'function') {
-        clerk.openSignUp({ afterSignUpUrl: window.location.href })
-        modalOpened = true
-      } else if (typeof clerk.openSignIn === 'function') {
-        clerk.openSignIn({ afterSignInUrl: window.location.href })
-        modalOpened = true
-      }
-    }
-  } catch (uiErr) {
-    console.warn('Clerk UI modal unavailable, falling back to direct Google redirect', uiErr)
-    modalOpened = false
-  }
-
-  // If modal cannot be opened (e.g. headless or missing UI bundle),
-  // directly trigger Google OAuth redirect via Clerk!
-  if (!modalOpened) {
-    if (onProgress) onProgress('Connecting with Google...')
-
-    if (typeof window !== 'undefined') {
-      try {
-        sessionStorage.setItem(
-          'booka_clerk_pending_sync',
-          JSON.stringify({ tenant, companyName, mode, ts: Date.now() })
-        )
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    const currentUrl = window.location.href
-
-    if (mode === 'signUp' && clerk.client?.signUp?.authenticateWithRedirect) {
-      await clerk.client.signUp.authenticateWithRedirect({
-        strategy: 'oauth_google',
-        redirectUrl: currentUrl,
-        redirectUrlComplete: currentUrl,
-      })
-      return
-    }
-
-    if (clerk.client?.signIn?.authenticateWithRedirect) {
-      await clerk.client.signIn.authenticateWithRedirect({
-        strategy: 'oauth_google',
-        redirectUrl: currentUrl,
-        redirectUrlComplete: currentUrl,
-      })
-      return
-    }
-
-    // Direct fallback if available on clerk root
-    if (typeof clerk.authenticateWithRedirect === 'function') {
-      await clerk.authenticateWithRedirect({
-        strategy: 'oauth_google',
-        redirectUrl: currentUrl,
-        redirectUrlComplete: currentUrl,
-      })
-      return
-    }
-  }
-
-  // Poll for active session after user authenticates in modal
-  return new Promise((resolve, reject) => {
-    let attempts = 0
-    const checkInterval = setInterval(async () => {
-      attempts++
-      if (window.Clerk?.session) {
-        clearInterval(checkInterval)
-        try {
-          if (onProgress) onProgress('Verifying Google credentials with clinic...')
-          const token = await window.Clerk.session.getToken()
-          if (!token) {
-            throw new Error('No authentication session token returned by Clerk')
-          }
-
-          const syncEndpoint = tenant ? `/t/${tenant}/auth/clerk/sync` : '/auth/clerk/sync'
-          const res = await api.post(syncEndpoint, {
-            token,
-            company_name: companyName,
-          })
-
-          const data = res.data || {}
-          const { token: bookaToken, user } = data
-
-          if (bookaToken) {
-            localStorage.setItem('token', bookaToken)
-            if (user?.role) localStorage.setItem('role', user.role)
-            if (user?.tenant_id) localStorage.setItem('tenant_id', String(user.tenant_id))
-          }
-
-          if (onSuccess) onSuccess(data)
-          resolve(data)
-        } catch (err) {
-          const errMsg =
-            err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Authentication failed'
-          if (onError) onError(errMsg)
-          reject(err)
-        }
-      }
-
-      if (attempts > 180) {
-        clearInterval(checkInterval)
-      }
-    }, 1000)
-  })
 }
 
-/**
- * Checks if the user already has an active Clerk session (e.g. after returning from Google OAuth redirect)
- * and exchanges it for a native Booka session.
- */
-export async function checkAndSyncClerkSession({
-  tenant = '',
-  clerkPublishableKey = '',
-  onProgress = null,
-  onSuccess = null,
-  onError = null,
-} = {}) {
-  if (typeof window === 'undefined') return null
+async function getClerkTokenWithRetry(clerk) {
+  for (let i = 0; i < 4; i++) {
+    if (clerk?.session) {
+      const tok = await clerk.session.getToken()
+      if (tok) return tok
+    }
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  return null
+}
 
-  const clerkKey =
-    clerkPublishableKey ||
-    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||
-    window.CLERK_PUBLISHABLE_KEY
-
-  if (!clerkKey) return null
-
+async function exchangeClerkSessionWithBooka(
+  clerk,
+  { tenant = '', companyName = '', onProgress = null, onSuccess = null, onError = null }
+) {
   try {
-    const clerk = await loadClerkSDK(clerkKey)
-    if (!clerk?.session) return null
-
-    if (onProgress) onProgress('Completing Google authentication...')
-    const token = await clerk.session.getToken()
-    if (!token) return null
-
-    let companyName = ''
-    let targetTenant = tenant
-    try {
-      const stored = sessionStorage.getItem('booka_clerk_pending_sync')
-      if (stored) {
-        const parsed = JSON.parse(stored)
-        if (parsed.companyName) companyName = parsed.companyName
-        if (parsed.tenant && !targetTenant) targetTenant = parsed.tenant
-        sessionStorage.removeItem('booka_clerk_pending_sync')
-      }
-    } catch (e) {
-      // ignore
+    if (onProgress) onProgress('Verifying Google credentials with clinic...')
+    const token = await getClerkTokenWithRetry(clerk)
+    if (!token) {
+      throw new Error('No authentication session token returned by Clerk')
     }
 
-    const syncEndpoint = targetTenant ? `/t/${targetTenant}/auth/clerk/sync` : '/auth/clerk/sync'
+    const syncEndpoint = tenant ? `/t/${tenant}/auth/clerk/sync` : '/auth/clerk/sync'
     const res = await api.post(syncEndpoint, {
       token,
       company_name: companyName,
@@ -293,10 +119,292 @@ export async function checkAndSyncClerkSession({
       if (user?.tenant_id) localStorage.setItem('tenant_id', String(user.tenant_id))
     }
 
+    try {
+      sessionStorage.removeItem('booka_clerk_pending_sync')
+      sessionStorage.removeItem('booka_clerk_logged_out')
+    } catch (e) {
+      // ignore
+    }
+
     if (onSuccess) onSuccess(data)
     return data
   } catch (err) {
-    if (onError) onError(err?.response?.data?.message || err?.message || 'Failed to sync Google session')
+    const errMsg = formatClerkError(err, 'Authentication failed')
+    if (onError) onError(errMsg)
+    throw err
+  }
+}
+
+/**
+ * Initiates Clerk authentication with Google and synchronizes the session with Booka.
+ * Supports both modal presentation (bundled UI) and direct Google OAuth redirect fallback.
+ */
+export async function initiateClerkGoogleAuth({
+  mode = 'signIn', // 'signIn' or 'signUp'
+  tenant = '',
+  companyName = '',
+  clerkPublishableKey = '',
+  onProgress = null,
+  onSuccess = null,
+  onError = null,
+} = {}) {
+  if (typeof window !== 'undefined') {
+    try {
+      sessionStorage.removeItem('booka_clerk_logged_out')
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  let clerk = null
+  try {
+    clerk = await loadClerkSDK(clerkPublishableKey, onProgress)
+  } catch (err) {
+    const errMsg = formatClerkError(err, 'Failed to initialize Clerk')
+    if (onError) onError(errMsg)
+    throw err
+  }
+
+  // Save sync context across potential same-tab OAuth redirects
+  const cleanReturnUrl = `${window.location.origin}${window.location.pathname}`
+  if (typeof window !== 'undefined') {
+    try {
+      sessionStorage.setItem(
+        'booka_clerk_pending_sync',
+        JSON.stringify({ tenant, companyName, mode, ts: Date.now() })
+      )
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // If user already has an active Clerk session, sync immediately
+  if (clerk.session) {
+    return exchangeClerkSessionWithBooka(clerk, {
+      tenant,
+      companyName,
+      onProgress,
+      onSuccess,
+      onError,
+    })
+  }
+
+  // Try opening Clerk UI modal (bundled directly in @clerk/clerk-js v5)
+  let modalOpened = false
+  try {
+    if (mode === 'signUp' && typeof clerk.openSignUp === 'function') {
+      clerk.openSignUp({
+        afterSignUpUrl: cleanReturnUrl,
+        afterSignInUrl: cleanReturnUrl,
+        fallbackRedirectUrl: cleanReturnUrl,
+      })
+      modalOpened = true
+    } else if (typeof clerk.openSignIn === 'function') {
+      clerk.openSignIn({
+        afterSignInUrl: cleanReturnUrl,
+        afterSignUpUrl: cleanReturnUrl,
+        fallbackRedirectUrl: cleanReturnUrl,
+      })
+      modalOpened = true
+    }
+  } catch (uiErr) {
+    console.warn('Clerk UI modal unavailable, falling back to direct Google OAuth redirect', uiErr)
+    modalOpened = false
+  }
+
+  // Fallback directly to Google OAuth redirect if modal did not open
+  if (!modalOpened) {
+    if (onProgress) onProgress('Redirecting to Google...')
+    if (mode === 'signUp' && clerk.client?.signUp?.authenticateWithRedirect) {
+      await clerk.client.signUp.authenticateWithRedirect({
+        strategy: 'oauth_google',
+        redirectUrl: cleanReturnUrl,
+        redirectUrlComplete: cleanReturnUrl,
+      })
+      return null
+    }
+    if (clerk.client?.signIn?.authenticateWithRedirect) {
+      await clerk.client.signIn.authenticateWithRedirect({
+        strategy: 'oauth_google',
+        redirectUrl: cleanReturnUrl,
+        redirectUrlComplete: cleanReturnUrl,
+      })
+      return null
+    }
+    throw new Error('Clerk Google SSO method unavailable')
+  }
+
+  // Listen for session resolution inside modal or redirect cancellation
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let unsubscribe = null
+    let checkInterval = null
+    let sawModalRendered = false
+
+    const cleanup = () => {
+      if (typeof unsubscribe === 'function') {
+        try {
+          unsubscribe()
+        } catch (e) {
+          // ignore
+        }
+      }
+      if (checkInterval) clearInterval(checkInterval)
+    }
+
+    const completeLogin = async () => {
+      if (settled) return
+      settled = true
+      cleanup()
+      try {
+        const data = await exchangeClerkSessionWithBooka(clerk, {
+          tenant,
+          companyName,
+          onProgress,
+          onSuccess,
+          onError,
+        })
+        resolve(data)
+      } catch (err) {
+        reject(err)
+      }
+    }
+
+    if (typeof clerk.addListener === 'function') {
+      unsubscribe = clerk.addListener((resources) => {
+        if (resources?.session) {
+          completeLogin()
+        }
+      })
+    }
+
+    let attempts = 0
+    checkInterval = setInterval(() => {
+      attempts++
+      if (clerk?.session) {
+        completeLogin()
+        return
+      }
+
+      // Detect if user closed the Clerk modal without signing in
+      if (typeof document !== 'undefined') {
+        const modalEl = document.querySelector('.cl-modalBackdrop, .cl-cardBox, .cl-signIn-root, .cl-signUp-root')
+        if (modalEl) {
+          sawModalRendered = true
+        } else if (sawModalRendered && attempts >= 3) {
+          // Modal was closed manually by user
+          settled = true
+          cleanup()
+          if (onError) onError('')
+          resolve(null)
+          return
+        }
+      }
+
+      if (attempts > 180) {
+        settled = true
+        cleanup()
+        if (onError) onError('Authentication timed out. Please try again.')
+        resolve(null)
+      }
+    }, 600)
+  })
+}
+
+/**
+ * Checks if the user has returned from a Google/Clerk OAuth redirect and completes Booka session sync.
+ */
+export async function checkAndSyncClerkSession({
+  tenant = '',
+  clerkPublishableKey = '',
+  onProgress = null,
+  onSuccess = null,
+  onError = null,
+} = {}) {
+  if (typeof window === 'undefined') return null
+
+  const clerkKey = normalizeClerkKey(
+    clerkPublishableKey ||
+      process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||
+      window.CLERK_PUBLISHABLE_KEY
+  )
+
+  if (!clerkKey) return null
+
+  const params = new URLSearchParams(window.location.search)
+  const hasCallbackParams =
+    params.has('__clerk_status') ||
+    params.has('__clerk_created_session') ||
+    params.has('__clerk_handshake') ||
+    window.location.hash.includes('sso-callback')
+
+  let pendingSync = null
+  let loggedOutFlag = false
+  try {
+    const rawPending = sessionStorage.getItem('booka_clerk_pending_sync')
+    if (rawPending) pendingSync = JSON.parse(rawPending)
+    loggedOutFlag = sessionStorage.getItem('booka_clerk_logged_out') === '1'
+  } catch (e) {
+    // ignore
+  }
+
+  const isSessionEndedNotice = params.get('notice') === 'session_ended' || params.get('session_ended')
+
+  // Do not auto-relogin on mount after explicit logout unless returning from an active OAuth redirect
+  if ((isSessionEndedNotice || loggedOutFlag) && !pendingSync && !hasCallbackParams) {
     return null
+  }
+
+  try {
+    const clerk = await loadClerkSDK(clerkKey)
+    if (!clerk?.session) return null
+
+    // Only auto-sync on mount if returning from OAuth redirect or active pending flow
+    if (!pendingSync && !hasCallbackParams) {
+      return null
+    }
+
+    const companyName = pendingSync?.companyName || ''
+    const targetTenant = tenant || pendingSync?.tenant || ''
+
+    return await exchangeClerkSessionWithBooka(clerk, {
+      tenant: targetTenant,
+      companyName,
+      onProgress,
+      onSuccess,
+      onError,
+    })
+  } catch (err) {
+    if (onError) onError(formatClerkError(err, 'Failed to sync Google session'))
+    return null
+  }
+}
+
+/**
+ * Signs out active Clerk session (if initialized) when user logs out of Booka.
+ */
+export async function signOutClerkSession() {
+  if (typeof window === 'undefined') return
+  try {
+    sessionStorage.setItem('booka_clerk_logged_out', '1')
+    sessionStorage.removeItem('booka_clerk_pending_sync')
+  } catch (e) {
+    // ignore
+  }
+
+  try {
+    if (window.Clerk?.session && typeof window.Clerk.signOut === 'function') {
+      await window.Clerk.signOut()
+      return
+    }
+    const clerkKey = normalizeClerkKey(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || window.CLERK_PUBLISHABLE_KEY)
+    if (clerkKey) {
+      const clerk = await loadClerkSDK(clerkKey)
+      if (clerk?.session) {
+        await clerk.signOut()
+      }
+    }
+  } catch (e) {
+    // non-fatal during logout
   }
 }
