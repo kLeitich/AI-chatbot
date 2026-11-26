@@ -123,7 +123,14 @@ func fetchClerkPublicKey(kid string, tenant Tenant) (*rsa.PublicKey, error) {
 	}
 
 	if jwksURL == "" {
-		return nil, errors.New("clerk JWKS URL not configured")
+		secretKey := resolveClerkSecretKey(tenant)
+		if secretKey != "" {
+			jwksURL = "https://api.clerk.com/v1/jwks"
+		}
+	}
+
+	if jwksURL == "" {
+		return nil, errors.New("clerk JWKS URL or CLERK_SECRET_KEY not configured")
 	}
 
 	cacheKey := fmt.Sprintf("%s:%s", jwksURL, kid)
@@ -137,19 +144,48 @@ func fetchClerkPublicKey(kid string, tenant Tenant) (*rsa.PublicKey, error) {
 	}
 	clerkJWKSCacheMu.RUnlock()
 
-	resp, err := clerkHTTPClient.Get(jwksURL)
+	fetchFromURL := func(targetURL, bearerToken string) (ClerkJWKS, error) {
+		req, reqErr := http.NewRequest("GET", targetURL, nil)
+		if reqErr != nil {
+			return ClerkJWKS{}, reqErr
+		}
+		if bearerToken != "" {
+			req.Header.Set("Authorization", "Bearer "+bearerToken)
+		}
+		resp, err := clerkHTTPClient.Do(req)
+		if err != nil {
+			return ClerkJWKS{}, fmt.Errorf("failed to fetch Clerk JWKS: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return ClerkJWKS{}, fmt.Errorf("clerk JWKS HTTP error %d: %s", resp.StatusCode, string(body))
+		}
+		var decoded ClerkJWKS
+		if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+			return ClerkJWKS{}, err
+		}
+		return decoded, nil
+	}
+
+	secretKey := resolveClerkSecretKey(tenant)
+	var bearerForPrimary string
+	if strings.HasPrefix(jwksURL, "https://api.clerk.com/") {
+		bearerForPrimary = secretKey
+	}
+
+	jwks, err := fetchFromURL(jwksURL, bearerForPrimary)
+	if err != nil && jwksURL != "https://api.clerk.com/v1/jwks" && secretKey != "" {
+		// Fallback to Clerk Backend API JWKS when frontend domain is unreachable or unverified
+		if fallbackJWKS, fbErr := fetchFromURL("https://api.clerk.com/v1/jwks", secretKey); fbErr == nil {
+			jwks = fallbackJWKS
+			jwksURL = "https://api.clerk.com/v1/jwks"
+			cacheKey = fmt.Sprintf("%s:%s", jwksURL, kid)
+			err = nil
+		}
+	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch Clerk JWKS: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("clerk JWKS HTTP error %d: %s", resp.StatusCode, string(body))
-	}
-
-	var jwks ClerkJWKS
-	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
 		return nil, err
 	}
 
@@ -169,6 +205,68 @@ func fetchClerkPublicKey(kid string, tenant Tenant) (*rsa.PublicKey, error) {
 	}
 
 	return nil, fmt.Errorf("key with kid '%s' not found in Clerk JWKS (%s)", kid, jwksURL)
+}
+
+var clerkAPIBaseURL = "https://api.clerk.com"
+
+func resolveClerkSecretKey(tenant Tenant) string {
+	if strings.TrimSpace(tenant.ClerkSecretKey) != "" {
+		return strings.TrimSpace(tenant.ClerkSecretKey)
+	}
+	return strings.TrimSpace(os.Getenv("CLERK_SECRET_KEY"))
+}
+
+// fetchClerkUserProfile retrieves the verified primary email and name from Clerk Backend API
+// when default session JWTs omit email/name claims.
+func fetchClerkUserProfile(clerkUserID string, secretKey string) (string, string, error) {
+	if strings.TrimSpace(clerkUserID) == "" || strings.TrimSpace(secretKey) == "" {
+		return "", "", errors.New("missing clerk user id or secret key")
+	}
+
+	apiURL := fmt.Sprintf("%s/v1/users/%s", strings.TrimRight(clerkAPIBaseURL, "/"), clerkUserID)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+secretKey)
+
+	resp, err := clerkHTTPClient.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", "", fmt.Errorf("clerk users API error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var userPayload struct {
+		FirstName             string `json:"first_name"`
+		LastName              string `json:"last_name"`
+		PrimaryEmailAddressID string `json:"primary_email_address_id"`
+		EmailAddresses        []struct {
+			ID           string `json:"id"`
+			EmailAddress string `json:"email_address"`
+		} `json:"email_addresses"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&userPayload); err != nil {
+		return "", "", err
+	}
+
+	var email string
+	for _, ea := range userPayload.EmailAddresses {
+		if ea.ID != "" && ea.ID == userPayload.PrimaryEmailAddressID {
+			email = ea.EmailAddress
+			break
+		}
+	}
+	if email == "" && len(userPayload.EmailAddresses) > 0 {
+		email = userPayload.EmailAddresses[0].EmailAddress
+	}
+
+	fullName := strings.TrimSpace(userPayload.FirstName + " " + userPayload.LastName)
+	return email, fullName, nil
 }
 
 // validateClerkToken verifies an incoming Clerk session JWT and bridges to Booka User
@@ -232,6 +330,22 @@ func validateClerkToken(tokStr string, tenantSlug string, companyName string) (*
 			lName, _ = claims["family_name"].(string)
 		}
 		fullName = strings.TrimSpace(fName + " " + lName)
+	}
+
+	// Default Clerk session JWTs only carry sub; fetch email & name from Clerk Backend API when omitted
+	if email == "" || fullName == "" {
+		if secretKey := resolveClerkSecretKey(targetTenant); secretKey != "" {
+			if apiEmail, apiName, profErr := fetchClerkUserProfile(sub, secretKey); profErr == nil {
+				if email == "" {
+					email = apiEmail
+				}
+				if fullName == "" {
+					fullName = apiName
+				}
+			} else {
+				log.Printf("[CLERK SSO] Failed to fetch Clerk user profile for '%s': %v", sub, profErr)
+			}
+		}
 	}
 
 	// Multitenant User Resolution & Auto-Registration

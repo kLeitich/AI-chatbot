@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -85,4 +86,44 @@ func TestCreateUniqueTenantSlug(t *testing.T) {
 		t.Errorf("Expected 'alpha-dental-1' for duplicate, got '%s'", slugDup)
 	}
 }
+
+func TestFetchClerkUserProfile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer sk_test_secret123" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path != "/v1/users/user_abc123" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"first_name": "Jane",
+			"last_name": "Wanjiku",
+			"primary_email_address_id": "idn_2",
+			"email_addresses": [
+				{"id": "idn_1", "email_address": "old@example.com"},
+				{"id": "idn_2", "email_address": "jane.wanjiku@gmail.com"}
+			]
+		}`))
+	}))
+	defer srv.Close()
+
+	prevBase := clerkAPIBaseURL
+	clerkAPIBaseURL = srv.URL
+	defer func() { clerkAPIBaseURL = prevBase }()
+
+	email, fullName, err := fetchClerkUserProfile("user_abc123", "sk_test_secret123")
+	if err != nil {
+		t.Fatalf("Expected no error fetching profile, got %v", err)
+	}
+	if email != "jane.wanjiku@gmail.com" {
+		t.Errorf("Expected primary email 'jane.wanjiku@gmail.com', got '%s'", email)
+	}
+	if fullName != "Jane Wanjiku" {
+		t.Errorf("Expected full name 'Jane Wanjiku', got '%s'", fullName)
+	}
+}
+
 
