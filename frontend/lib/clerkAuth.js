@@ -14,6 +14,54 @@ function formatClerkError(err, fallbackMsg) {
   return apiMsg || httpMsg || err?.message || fallbackMsg
 }
 
+function spaNavigate(to) {
+  if (typeof window === 'undefined' || typeof to !== 'string' || !to) return
+  try {
+    const parsed = new URL(to, window.location.origin)
+    if (parsed.origin === window.location.origin) {
+      window.history.replaceState({}, '', `${parsed.pathname}${parsed.search}${parsed.hash}`)
+      return
+    }
+    window.location.href = parsed.href
+  } catch {
+    // ignore invalid URL
+  }
+}
+
+function describeIncompleteCallbackState(clerk) {
+  const signIn = clerk?.client?.signIn
+  const signUp = clerk?.client?.signUp
+
+  const signInErr = signIn?.firstFactorVerification?.error
+  const signUpErr = signUp?.verifications?.externalAccount?.error
+  const oauthErr = signInErr || signUpErr
+  if (oauthErr?.longMessage || oauthErr?.message) {
+    return oauthErr.longMessage || oauthErr.message
+  }
+
+  if (signIn?.protectCheck || signUp?.protectCheck || signIn?.status === 'needs_protect_check') {
+    return 'Additional security verification is required in Clerk Protect before signing in.'
+  }
+
+  if (signIn?.status === 'needs_second_factor' || signIn?.status === 'needs_client_trust') {
+    return 'Two-factor or new-device verification is enabled for this Clerk account. Please verify or sign in with your email and password.'
+  }
+
+  if (signIn?.status === 'needs_new_password') {
+    return 'This account requires a password reset before completing sign-in.'
+  }
+
+  if (signUp?.status === 'missing_requirements') {
+    const missing = [...(signUp.missingFields || []), ...(signUp.unverifiedFields || [])]
+    if (missing.length > 0) {
+      return `Clerk sign-up requires additional fields (${missing.join(', ')}). Update Clerk Dashboard settings or register with the email form below.`
+    }
+    return 'Clerk sign-up requires additional verification before completion.'
+  }
+
+  return ''
+}
+
 /**
  * Extracts the Clerk Frontend API domain from the publishable key.
  * e.g. pk_test_Y2xlcmsuZXhhbXBsZS5jb20k -> clerk.example.com
@@ -36,7 +84,7 @@ export function getClerkFrontendApi(publishableKey) {
 }
 
 /**
- * Loads and initializes the bundled Clerk JS SDK with built-in UI components.
+ * Loads and initializes the bundled @clerk/clerk-js (Core 3) SDK headlessly for direct OAuth flows.
  */
 export async function loadClerkSDK(clerkPublishableKey = '', onProgress = null) {
   if (typeof window === 'undefined') return null
@@ -68,7 +116,10 @@ export async function loadClerkSDK(clerkPublishableKey = '', onProgress = null) 
     }
 
     if (!clerk.loaded) {
-      await clerk.load()
+      await clerk.load({
+        routerPush: spaNavigate,
+        routerReplace: spaNavigate,
+      })
     }
 
     if (!clerk.client || !clerk.environment) {
@@ -144,8 +195,7 @@ async function exchangeClerkSessionWithBooka(
 }
 
 /**
- * Initiates Clerk authentication with Google and synchronizes the session with Booka.
- * Supports both modal presentation (bundled UI) and direct Google OAuth redirect fallback.
+ * Initiates Clerk authentication directly with Google OAuth and synchronizes the session with Booka.
  */
 export async function initiateClerkGoogleAuth({
   mode = 'signIn', // 'signIn' or 'signUp'
@@ -173,7 +223,6 @@ export async function initiateClerkGoogleAuth({
     throw err
   }
 
-  // Direct Google OAuth redirect flow: sends the user straight to Google Account Chooser
   const baseReturnUrl = `${window.location.origin}${window.location.pathname}`
   const callbackUrl = `${baseReturnUrl}?sso_callback=1`
   const completeUrl = `${baseReturnUrl}?sso_complete=1`
@@ -221,7 +270,10 @@ export async function initiateClerkGoogleAuth({
       return { redirected: true }
     }
   } catch (redirectErr) {
-    const fapi = clerk.frontendApi || getClerkFrontendApi(clerkPublishableKey || process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) || 'Clerk API'
+    const fapi =
+      clerk.frontendApi ||
+      getClerkFrontendApi(clerkPublishableKey || process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) ||
+      'Clerk API'
     const rawMsg = formatClerkError(redirectErr, 'Failed to start Google sign-in redirect')
     const friendlyMsg =
       rawMsg.toLowerCase().includes('network') || rawMsg.toLowerCase().includes('fetch')
@@ -231,106 +283,94 @@ export async function initiateClerkGoogleAuth({
     throw new Error(friendlyMsg)
   }
 
-  // Fallback to Clerk modal only if client.authenticateWithRedirect is unavailable
-  let modalOpened = false
-  try {
-    if (mode === 'signUp' && typeof clerk.openSignUp === 'function') {
-      clerk.openSignUp({
-        afterSignUpUrl: completeUrl,
-        afterSignInUrl: completeUrl,
-        fallbackRedirectUrl: completeUrl,
-      })
-      modalOpened = true
-    } else if (typeof clerk.openSignIn === 'function') {
-      clerk.openSignIn({
-        afterSignInUrl: completeUrl,
-        afterSignUpUrl: completeUrl,
-        fallbackRedirectUrl: completeUrl,
-      })
-      modalOpened = true
-    }
-  } catch (uiErr) {
-    console.warn('Clerk UI modal unavailable', uiErr)
-    modalOpened = false
-  }
-
-  if (!modalOpened) {
-    throw new Error('Clerk Google SSO method unavailable')
-  }
-
-  // Listen for session resolution inside fallback modal
-  return new Promise((resolve, reject) => {
-    let settled = false
-    let unsubscribe = null
-    let checkInterval = null
-    let sawModalRendered = false
-
-    const cleanup = () => {
-      if (typeof unsubscribe === 'function') {
-        try {
-          unsubscribe()
-        } catch (e) {
-          // ignore
-        }
-      }
-      if (checkInterval) clearInterval(checkInterval)
-    }
-
-    const completeLogin = async () => {
-      if (settled) return
-      settled = true
-      cleanup()
-      try {
-        const data = await exchangeClerkSessionWithBooka(clerk, {
-          tenant,
-          companyName,
-          onProgress,
-          onSuccess,
-          onError,
+  // Only attempt modal UI fallback if @clerk/ui components are explicitly loaded
+  const hasUiComponents = Boolean(clerk.uiVersion || clerk.components)
+  if (hasUiComponents) {
+    let modalOpened = false
+    try {
+      if (mode === 'signUp' && typeof clerk.openSignUp === 'function') {
+        clerk.openSignUp({
+          forceRedirectUrl: completeUrl,
+          fallbackRedirectUrl: completeUrl,
         })
-        resolve(data)
-      } catch (err) {
-        reject(err)
+        modalOpened = true
+      } else if (typeof clerk.openSignIn === 'function') {
+        clerk.openSignIn({
+          forceRedirectUrl: completeUrl,
+          fallbackRedirectUrl: completeUrl,
+        })
+        modalOpened = true
       }
+    } catch (uiErr) {
+      console.warn('Clerk UI modal unavailable', uiErr)
+      modalOpened = false
     }
 
-    if (typeof clerk.addListener === 'function') {
-      unsubscribe = clerk.addListener((resources) => {
-        if (resources?.session) {
-          completeLogin()
+    if (modalOpened) {
+      return new Promise((resolve, reject) => {
+        let settled = false
+        let unsubscribe = null
+        let checkInterval = null
+
+        const cleanup = () => {
+          if (typeof unsubscribe === 'function') {
+            try {
+              unsubscribe()
+            } catch (e) {
+              // ignore
+            }
+          }
+          if (checkInterval) clearInterval(checkInterval)
         }
-      })
-    }
 
-    let attempts = 0
-    checkInterval = setInterval(() => {
-      attempts++
-      if (clerk?.session) {
-        completeLogin()
-        return
-      }
-
-      if (typeof document !== 'undefined') {
-        const modalEl = document.querySelector('.cl-modalBackdrop, .cl-cardBox, .cl-signIn-root, .cl-signUp-root')
-        if (modalEl) {
-          sawModalRendered = true
-        } else if (sawModalRendered && attempts >= 3) {
+        const completeLogin = async () => {
+          if (settled) return
           settled = true
           cleanup()
-          if (onError) onError('')
-          resolve(null)
-          return
+          try {
+            const data = await exchangeClerkSessionWithBooka(clerk, {
+              tenant,
+              companyName,
+              onProgress,
+              onSuccess,
+              onError,
+            })
+            resolve(data)
+          } catch (err) {
+            reject(err)
+          }
         }
-      }
 
-      if (attempts > 180) {
-        settled = true
-        cleanup()
-        if (onError) onError('Authentication timed out. Please try again.')
-        resolve(null)
-      }
-    }, 600)
-  })
+        if (typeof clerk.addListener === 'function') {
+          unsubscribe = clerk.addListener((resources) => {
+            if (resources?.session) {
+              completeLogin()
+            }
+          })
+        }
+
+        let attempts = 0
+        checkInterval = setInterval(() => {
+          attempts++
+          if (clerk?.session) {
+            completeLogin()
+            return
+          }
+          if (attempts > 180) {
+            settled = true
+            cleanup()
+            if (onError) onError('Authentication timed out. Please try again.')
+            resolve(null)
+          }
+        }, 600)
+      })
+    }
+  }
+
+  const unavailableMsg =
+    'Google OAuth redirect is unavailable for this Clerk configuration. Ensure Google social sign-in is enabled in Clerk Dashboard.'
+  if (onError) onError(unavailableMsg)
+  throw new Error(unavailableMsg)
 }
 
 /**
@@ -391,33 +431,57 @@ export async function checkAndSyncClerkSession({
 
     const baseReturnUrl = `${window.location.origin}${window.location.pathname}`
     const completeUrl = `${baseReturnUrl}?sso_complete=1`
+    let callbackIssue = ''
 
     // Handle returning Google OAuth callback to activate session & transfer signIn <-> signUp seamlessly
     if (isSSOCallback && !clerk.session && typeof clerk.handleRedirectCallback === 'function') {
       if (onProgress) onProgress('Completing Google sign-in...')
       await clerk.handleRedirectCallback(
         {
-          afterSignInUrl: completeUrl,
-          afterSignUpUrl: completeUrl,
           signInForceRedirectUrl: completeUrl,
           signUpForceRedirectUrl: completeUrl,
+          signInFallbackRedirectUrl: completeUrl,
+          signUpFallbackRedirectUrl: completeUrl,
           signInUrl: baseReturnUrl,
           signUpUrl: baseReturnUrl,
         },
         async (to) => {
           if (clerk.session) return
-          if (typeof to === 'string' && (to.includes('factor') || to.includes('verify') || to.includes('continue'))) {
+          const hasUiComponents = Boolean(clerk.uiVersion || clerk.components)
+          if (
+            hasUiComponents &&
+            typeof to === 'string' &&
+            (to.includes('factor') || to.includes('verify') || to.includes('continue'))
+          ) {
             if (pendingSync?.mode === 'signUp' && typeof clerk.openSignUp === 'function') {
-              clerk.openSignUp({ afterSignUpUrl: completeUrl })
-            } else if (typeof clerk.openSignIn === 'function') {
-              clerk.openSignIn({ afterSignInUrl: completeUrl })
+              clerk.openSignUp({ forceRedirectUrl: completeUrl, fallbackRedirectUrl: completeUrl })
+              return
+            }
+            if (typeof clerk.openSignIn === 'function') {
+              clerk.openSignIn({ forceRedirectUrl: completeUrl, fallbackRedirectUrl: completeUrl })
+              return
             }
           }
+          callbackIssue = describeIncompleteCallbackState(clerk) || callbackIssue
         }
       )
     }
 
-    if (!clerk.session) return null
+    if (!clerk.session) {
+      if (isSSOCallback || isSSOComplete) {
+        try {
+          window.history.replaceState({}, '', window.location.pathname)
+          sessionStorage.removeItem('booka_clerk_pending_sync')
+        } catch (e) {
+          // ignore
+        }
+        const issue = callbackIssue || describeIncompleteCallbackState(clerk)
+        if (issue && onError) {
+          onError(issue)
+        }
+      }
+      return null
+    }
 
     // Clean sso query params from address bar before redirecting into dashboard
     try {
@@ -439,6 +503,11 @@ export async function checkAndSyncClerkSession({
       onError,
     })
   } catch (err) {
+    try {
+      sessionStorage.removeItem('booka_clerk_pending_sync')
+    } catch (e) {
+      // ignore
+    }
     if (onError) onError(formatClerkError(err, 'Failed to sync Google session'))
     return null
   }
@@ -458,14 +527,16 @@ export async function signOutClerkSession() {
 
   try {
     if (window.Clerk?.session && typeof window.Clerk.signOut === 'function') {
-      await window.Clerk.signOut()
+      await window.Clerk.signOut(() => {})
       return
     }
-    const clerkKey = normalizeClerkKey(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || window.CLERK_PUBLISHABLE_KEY)
+    const clerkKey = normalizeClerkKey(
+      process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || window.CLERK_PUBLISHABLE_KEY
+    )
     if (clerkKey) {
       const clerk = await loadClerkSDK(clerkKey)
       if (clerk?.session) {
-        await clerk.signOut()
+        await clerk.signOut(() => {})
       }
     }
   } catch (e) {
