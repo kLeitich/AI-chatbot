@@ -76,10 +76,12 @@ export default function CompanySignup() {
         admin_password: formData.admin_password,
       })
 
-      const { tenant_id, token } = res.data || {}
+      const { tenant_id, token, role } = res.data || {}
       if (tenant_id && token) {
         localStorage.setItem('token', token)
         localStorage.setItem('tenant_id', tenant_id)
+        localStorage.setItem('tenant', tenant_id)
+        localStorage.setItem('role', role || 'tenant_admin')
         setSuccessMessage('Registration successful! Redirecting to dashboard...')
         setTimeout(() => {
           router.replace(`/t/${tenant_id}/admin/dashboard`)

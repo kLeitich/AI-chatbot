@@ -107,6 +107,46 @@ func getUserPermissions(userID uint) ([]string, error) {
 	return result, nil
 }
 
+// resolveEffectivePermissions returns AllPermissions for tenant_admin or explicit DB permissions for staff
+func resolveEffectivePermissions(user User) []string {
+	if user.Role == RoleTenantAdmin {
+		return append([]string(nil), AllPermissions...)
+	}
+	perms, err := getUserPermissions(user.ID)
+	if err != nil || perms == nil {
+		return []string{}
+	}
+	return perms
+}
+
+// assignUserPermissions idempotently grants valid permissions to a user inside the provided DB/tx
+func assignUserPermissions(tx *gorm.DB, userID uint, perms []string) error {
+	if tx == nil || userID == 0 || len(perms) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(perms))
+	for _, raw := range perms {
+		p := strings.TrimSpace(raw)
+		if p == "" || !ValidPermissionsMap[p] || seen[p] {
+			continue
+		}
+		seen[p] = true
+		var cnt int64
+		if err := tx.Model(&UserPermission{}).Where("user_id = ? AND permission = ?", userID, p).Count(&cnt).Error; err != nil {
+			return err
+		}
+		if cnt == 0 {
+			if err := tx.Create(&UserPermission{
+				UserID:     userID,
+				Permission: p,
+			}).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // hasPermission checks if the authenticated user has a specific permission
 func hasPermission(c *fiber.Ctx, perm string) bool {
 	role, _ := c.Locals("role").(string)
@@ -276,16 +316,7 @@ func createTenantUserHandler(c *fiber.Ctx) error {
 		if err := tx.Create(&newUser).Error; err != nil {
 			return err
 		}
-		for _, p := range cleanPerms {
-			up := UserPermission{
-				UserID:     newUser.ID,
-				Permission: p,
-			}
-			if err := tx.Create(&up).Error; err != nil {
-				return err
-			}
-		}
-		return nil
+		return assignUserPermissions(tx, newUser.ID, cleanPerms)
 	})
 
 	if err != nil {

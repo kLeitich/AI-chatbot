@@ -17,6 +17,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
+	"gorm.io/gorm"
 )
 
 type ClerkJWKS struct {
@@ -364,7 +365,7 @@ func validateClerkToken(tokStr string, tenantSlug string, companyName string) (*
 				return &user, false, nil
 			}
 
-			// Auto-provision user under target tenant as staff
+			// Auto-provision user under target tenant as staff with default viewer permissions
 			newUser := User{
 				TenantID:     targetTenant.ID,
 				Email:        cleanEmail,
@@ -373,7 +374,13 @@ func validateClerkToken(tokStr string, tenantSlug string, companyName string) (*
 				TokenVersion: 1,
 				ClerkUserID:  sub,
 			}
-			if cErr := db.Create(&newUser).Error; cErr == nil {
+			cErr := db.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Create(&newUser).Error; err != nil {
+					return err
+				}
+				return assignUserPermissions(tx, newUser.ID, PermissionPresets["viewer"])
+			})
+			if cErr == nil {
 				log.Printf("[CLERK SSO] Auto-provisioned user '%s' under tenant '%s' via Clerk", cleanEmail, targetTenant.Slug)
 				return &newUser, true, nil
 			}
@@ -405,7 +412,13 @@ func validateClerkToken(tokStr string, tenantSlug string, companyName string) (*
 					TokenVersion: 1,
 					ClerkUserID:  sub,
 				}
-				if cErr := db.Create(&newUser).Error; cErr == nil {
+				cErr := db.Transaction(func(tx *gorm.DB) error {
+					if err := tx.Create(&newUser).Error; err != nil {
+						return err
+					}
+					return assignUserPermissions(tx, newUser.ID, PermissionPresets["viewer"])
+				})
+				if cErr == nil {
 					return &newUser, true, nil
 				}
 			}
@@ -461,7 +474,12 @@ func validateClerkToken(tokStr string, tenantSlug string, companyName string) (*
 				TokenVersion: 1,
 				ClerkUserID:  sub,
 			}
-			if err := db.Create(&newUser).Error; err != nil {
+			if err := db.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Create(&newUser).Error; err != nil {
+					return err
+				}
+				return assignUserPermissions(tx, newUser.ID, AllPermissions)
+			}); err != nil {
 				return nil, false, fmt.Errorf("failed to create admin user: %w", err)
 			}
 
@@ -507,6 +525,8 @@ func clerkSyncHandler(c *fiber.Ctx) error {
 	var tenant Tenant
 	_ = db.First(&tenant, user.TenantID).Error
 
+	perms := resolveEffectivePermissions(*user)
+
 	return c.JSON(fiber.Map{
 		"token":          bookaToken,
 		"is_new_account": isNew,
@@ -518,6 +538,7 @@ func clerkSyncHandler(c *fiber.Ctx) error {
 			"must_change_password": user.MustChangePassword,
 			"tenant_id":            user.TenantID,
 			"clerk_user_id":        user.ClerkUserID,
+			"permissions":          perms,
 		},
 		"tenant": fiber.Map{
 			"id":   tenant.ID,

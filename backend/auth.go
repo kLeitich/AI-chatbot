@@ -19,6 +19,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 type authRequest struct {
@@ -42,9 +43,11 @@ type companyRegisterRequest struct {
 }
 
 type companyRegisterResponse struct {
-	TenantID string `json:"tenant_id"`
-	Token    string `json:"token"`
-	Message  string `json:"message"`
+	TenantID    string   `json:"tenant_id"`
+	Token       string   `json:"token"`
+	Role        string   `json:"role,omitempty"`
+	Permissions []string `json:"permissions,omitempty"`
+	Message     string   `json:"message"`
 }
 
 var commonPasswords = map[string]bool{
@@ -429,7 +432,12 @@ func companyRegisterHandler(c *fiber.Ctx) error {
 		TokenVersion:       1,
 		TenantID:           tenant.ID,
 	}
-	if err := db.Create(&adminUser).Error; err != nil {
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&adminUser).Error; err != nil {
+			return err
+		}
+		return assignUserPermissions(tx, adminUser.ID, AllPermissions)
+	}); err != nil {
 		return fiber.NewError(fiber.StatusConflict, "admin email already registered")
 	}
 
@@ -439,9 +447,11 @@ func companyRegisterHandler(c *fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(companyRegisterResponse{
-		TenantID: tenantSlug,
-		Token:    token,
-		Message:  "company registered successfully",
+		TenantID:    tenantSlug,
+		Token:       token,
+		Role:        adminUser.Role,
+		Permissions: append([]string(nil), AllPermissions...),
+		Message:     "company registered successfully",
 	})
 }
 
