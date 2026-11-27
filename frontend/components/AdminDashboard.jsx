@@ -163,7 +163,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
     } catch (e) {
       if (e?.response?.status === 401) {
         localStorage.removeItem('token')
-        router.replace(`/t/${tenant}/login`)
+        router.replace('/login?notice=session_ended')
         return
       }
       setLoadError(extractErrorInfo(e))
@@ -203,7 +203,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
     } catch (e) {
       if (e?.response?.status === 401) {
         localStorage.removeItem('token')
-        router.replace(`/t/${tenant}/login`)
+        router.replace('/login?notice=session_ended')
         return
       }
       setLoadError(extractErrorInfo(e))
@@ -618,7 +618,7 @@ export default function AdminDashboard({ tenant = 'default' }) {
                     Register Clinic (/signup)
                   </a>
                   <a
-                    href={`/t/${tenant}/login`}
+                    href="/login"
                     className="px-4 py-2 border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-lg transition shadow-sm inline-flex items-center"
                   >
                     Log In Again

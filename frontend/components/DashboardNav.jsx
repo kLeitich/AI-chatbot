@@ -18,9 +18,10 @@ export default function DashboardNav({ tenant, isPlatform = false }) {
   const handleLogout = async () => {
     localStorage.removeItem('token')
     localStorage.removeItem('tenant_id')
+    localStorage.removeItem('tenant')
     localStorage.removeItem('role')
     await signOutClerkSession()
-    router.replace(isPlatform ? '/platform/login' : `/t/${tenant}/login`)
+    router.replace('/login')
   }
 
   const handleChangePassword = async () => {

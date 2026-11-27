@@ -43,11 +43,11 @@ describe('Auth Interceptors (401 vs 403)', () => {
     expect(localStorage.getItem('token')).toBeNull()
     expect(localStorage.getItem('tenant_id')).toBeNull()
 
-    // Redirected to tenant login with notice
-    expect(redirectSpy).toHaveBeenCalledWith('/t/test-clinic/login?notice=session_ended')
+    // Redirected to unified login with notice
+    expect(redirectSpy).toHaveBeenCalledWith('/login?notice=session_ended')
   })
 
-  it('redirects to platform login with notice on 401 from platform path', async () => {
+  it('redirects to unified login with notice on 401 from platform path', async () => {
     getPathnameSpy.mockReturnValue('/platform/dashboard')
     localStorage.setItem('token', 'expired-platform-token')
 
@@ -65,14 +65,14 @@ describe('Auth Interceptors (401 vs 403)', () => {
     await expect(responseHandler(err)).rejects.toEqual(err)
 
     expect(localStorage.getItem('token')).toBeNull()
-    expect(redirectSpy).toHaveBeenCalledWith('/platform/login?notice=session_ended')
+    expect(redirectSpy).toHaveBeenCalledWith('/login?notice=session_ended')
   })
 
   it('avoids redirect loop if 401 happens on login page or during login request', async () => {
-    getPathnameSpy.mockReturnValue('/t/test-clinic/login')
+    getPathnameSpy.mockReturnValue('/login')
 
     const err = {
-      config: { url: '/t/test-clinic/login' },
+      config: { url: '/auth/login' },
       response: {
         status: 401,
         data: {

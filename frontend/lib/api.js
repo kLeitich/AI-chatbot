@@ -79,20 +79,13 @@ api.interceptors.response.use(
         reqUrl.includes('/auth/register')
 
       // On 401 (TOKEN_EXPIRED, TOKEN_REVOKED, ACCOUNT_DISABLED, or unauthorized)
-      // Clear token and redirect to appropriate login page, avoiding redirect loops or interrupting auth flows
+      // Clear token and redirect to unified login page, avoiding redirect loops or interrupting auth flows
       if (status === 401 && !isAuthPage && !isAuthRequest) {
         localStorage.removeItem('token')
         localStorage.removeItem('tenant_id')
+        localStorage.removeItem('role')
 
-        const isPlatform = pathname.startsWith('/platform') || error.config?.url?.startsWith('/platform')
-        if (isPlatform) {
-          nav.redirect('/platform/login?notice=session_ended')
-        } else {
-          const tenantMatch =
-            pathname.match(/^\/t\/([^/]+)/) || (error.config?.url && error.config.url.match(/^\/t\/([^/]+)/))
-          const tenant = tenantMatch ? tenantMatch[1] : (localStorage.getItem('tenant') || 'default')
-          nav.redirect(`/t/${tenant}/login?notice=session_ended`)
-        }
+        nav.redirect('/login?notice=session_ended')
         return Promise.reject(error)
       }
 
