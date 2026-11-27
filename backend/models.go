@@ -116,8 +116,8 @@ type Appointment struct {
 	GoogleEventID          string    `gorm:"size:255" json:"google_event_id,omitempty"`
 	ChatwootConversationID *int      `json:"chatwoot_conversation_id,omitempty"`
 	ChatwootMessageID      *int      `json:"chatwoot_message_id,omitempty"`
-	Reminder24hSent        bool      `gorm:"default:false" json:"reminder_24h_sent"`
-	Reminder3hSent         bool      `gorm:"default:false" json:"reminder_3h_sent"`
+	Reminder24hSent        bool      `gorm:"column:reminder_24h_sent;default:false" json:"reminder_24h_sent"`
+	Reminder3hSent         bool      `gorm:"column:reminder_3h_sent;default:false" json:"reminder_3h_sent"`
 	CreatedAt              time.Time `json:"created_at"`
 	UpdatedAt              time.Time `json:"updated_at"`
 }

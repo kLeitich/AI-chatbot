@@ -184,6 +184,7 @@ func initDatabase(dbPath string, appEnv string) uint {
 		log.Fatalf("failed to migrate database: %v", err)
 	}
 
+	migrateAppointmentReminderColumns()
 	migrateUsersToPermissions()
 	backfillTenantSettings()
 
@@ -288,4 +289,30 @@ func backfillTenantSettings() {
 	}
 	_ = db.Model(&Tenant{}).Where("allowed_embed_origins = '' OR allowed_embed_origins IS NULL").Update("allowed_embed_origins", "[]").Error
 	_ = db.Model(&Tenant{}).Where("booking_link_enabled IS NULL").Update("booking_link_enabled", true).Error
+}
+
+// migrateAppointmentReminderColumns ensures reminder_24h_sent and reminder_3h_sent columns exist
+// and copies flags from GORM's default reminder24h_sent/reminder3h_sent column names if present.
+func migrateAppointmentReminderColumns() {
+	if db == nil {
+		return
+	}
+	if !db.Migrator().HasColumn(&Appointment{}, "reminder_24h_sent") {
+		if err := db.Migrator().AddColumn(&Appointment{}, "Reminder24hSent"); err != nil {
+			log.Printf("[migration] Failed to add reminder_24h_sent column: %v", err)
+		}
+	}
+	if !db.Migrator().HasColumn(&Appointment{}, "reminder_3h_sent") {
+		if err := db.Migrator().AddColumn(&Appointment{}, "Reminder3hSent"); err != nil {
+			log.Printf("[migration] Failed to add reminder_3h_sent column: %v", err)
+		}
+	}
+	if db.Migrator().HasColumn(&Appointment{}, "reminder24h_sent") {
+		_ = db.Exec("UPDATE appointments SET reminder_24h_sent = true WHERE reminder24h_sent = true AND (reminder_24h_sent IS NULL OR reminder_24h_sent = false)").Error
+	}
+	if db.Migrator().HasColumn(&Appointment{}, "reminder3h_sent") {
+		_ = db.Exec("UPDATE appointments SET reminder_3h_sent = true WHERE reminder3h_sent = true AND (reminder_3h_sent IS NULL OR reminder_3h_sent = false)").Error
+	}
+	_ = db.Model(&Appointment{}).Where("reminder_24h_sent IS NULL").Update("reminder_24h_sent", false).Error
+	_ = db.Model(&Appointment{}).Where("reminder_3h_sent IS NULL").Update("reminder_3h_sent", false).Error
 }

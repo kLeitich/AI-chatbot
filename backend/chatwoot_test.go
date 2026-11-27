@@ -332,6 +332,43 @@ func TestChatwootControlledBookingToolsAndIsolation(t *testing.T) {
 	}
 }
 
+func TestReminderColumnsAndQuery(t *testing.T) {
+	tenantID := setupTestDB(t)
+
+	if !db.Migrator().HasColumn(&Appointment{}, "reminder_24h_sent") {
+		t.Fatalf("Expected appointments table to have column reminder_24h_sent")
+	}
+	if !db.Migrator().HasColumn(&Appointment{}, "reminder_3h_sent") {
+		t.Fatalf("Expected appointments table to have column reminder_3h_sent")
+	}
+
+	convID := 9091
+	ap := Appointment{
+		TenantID:               tenantID,
+		PatientName:            "Reminder Check",
+		Doctor:                 "Dr. Kim",
+		Date:                   nowInAppLocation().Add(22 * time.Hour).Format("2006-01-02"),
+		Time:                   "10:00",
+		Status:                 StatusConfirmed,
+		ChatwootConversationID: &convID,
+	}
+	if err := db.Create(&ap).Error; err != nil {
+		t.Fatalf("Failed to create appointment: %v", err)
+	}
+
+	var matched []Appointment
+	if err := db.Where("status IN (?, ?) AND chatwoot_conversation_id IS NOT NULL AND (reminder_24h_sent = ? OR reminder_3h_sent = ?)",
+		StatusPending, StatusConfirmed, false, false).Find(&matched).Error; err != nil {
+		t.Fatalf("Reminder query failed: %v", err)
+	}
+	if len(matched) == 0 {
+		t.Fatalf("Expected reminder query to return created appointment")
+	}
+
+	// Ensure worker executes cleanly without SQL errors
+	processPendingAppointmentReminders()
+}
+
 func formatUint(v uint) string {
 	b, _ := json.Marshal(v)
 	return string(b)
