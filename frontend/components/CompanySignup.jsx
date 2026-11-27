@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import api from '../lib/api'
-import { initiateClerkGoogleAuth, checkAndSyncClerkSession } from '../lib/clerkAuth'
+import { initiateClerkGoogleAuth, checkAndSyncClerkSession, getPostAuthRedirectPath } from '../lib/clerkAuth'
 
 export default function CompanySignup() {
   const [formData, setFormData] = useState({
@@ -18,15 +18,22 @@ export default function CompanySignup() {
 
   useEffect(() => {
     checkAndSyncClerkSession({
-      onProgress: (status) => setSuccessMessage(status),
+      onProgress: (status) => {
+        setLoading(true)
+        setSuccessMessage(status)
+      },
       onSuccess: (data) => {
         setSuccessMessage('Account and clinic practice ready! Redirecting to dashboard...')
-        const tenantSlug = data?.tenant?.slug || data?.user?.tenant_id || 'default'
+        const target = getPostAuthRedirectPath(data)
         setTimeout(() => {
-          router.replace(`/t/${tenantSlug}/admin/dashboard`)
-        }, 800)
+          router.replace(target)
+        }, 700)
       },
-      onError: (errMsg) => setError(errMsg),
+      onError: (errMsg) => {
+        setSuccessMessage('')
+        setError(errMsg)
+        setLoading(false)
+      },
     })
   }, [router])
 
@@ -99,10 +106,10 @@ export default function CompanySignup() {
         onProgress: (status) => setSuccessMessage(status),
         onSuccess: (data) => {
           setSuccessMessage('Account and clinic practice ready! Redirecting to dashboard...')
-          const tenantSlug = data?.tenant?.slug || data?.user?.tenant_id || 'default'
+          const target = getPostAuthRedirectPath(data)
           setTimeout(() => {
-            router.replace(`/t/${tenantSlug}/admin/dashboard`)
-          }, 800)
+            router.replace(target)
+          }, 700)
         },
         onError: (errMsg) => {
           setSuccessMessage('')
@@ -220,7 +227,7 @@ export default function CompanySignup() {
               d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
             />
           </svg>
-          Sign up with Google / Clerk SSO
+          Sign up with Google
         </button>
 
         <div className="text-center text-sm text-gray-600">

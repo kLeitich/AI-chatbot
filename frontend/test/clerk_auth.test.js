@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   getClerkFrontendApi,
+  getPostAuthRedirectPath,
   loadClerkSDK,
   initiateClerkGoogleAuth,
   checkAndSyncClerkSession,
@@ -197,10 +198,44 @@ describe('clerkAuth bundled Core 3 helper', () => {
     expect(mockHandleRedirectCallback).toHaveBeenCalled()
     expect(synced?.token).toBe('booka_jwt_return')
     expect(localStorage.getItem('token')).toBe('booka_jwt_return')
+    expect(localStorage.getItem('tenant')).toBe('beta-clinic')
+    expect(getPostAuthRedirectPath(synced)).toBe('/t/beta-clinic/admin/dashboard')
+    expect(getPostAuthRedirectPath({ user: { role: 'platform_admin' } })).toBe('/platform/dashboard')
 
     await signOutClerkSession()
     expect(mockSignOut).toHaveBeenCalledWith(expect.any(Function))
     expect(sessionStorage.getItem('booka_clerk_logged_out')).toBe('1')
+  })
+
+  it('deduplicates concurrent checkAndSyncClerkSession calls during OAuth signup callback', async () => {
+    mockLoad.mockResolvedValue(undefined)
+    mockGetToken.mockResolvedValue('clerk_jwt_signup')
+    mockHandleRedirectCallback.mockImplementation(async () => {
+      mockClerkInstance.session = { getToken: mockGetToken }
+    })
+    sessionStorage.setItem(
+      'booka_clerk_pending_sync',
+      JSON.stringify({ tenant: '', companyName: 'Sunrise Clinic', mode: 'signUp', ts: Date.now() })
+    )
+    window.history.replaceState({}, '', '/signup?sso_callback=1')
+
+    api.post.mockResolvedValueOnce({
+      data: {
+        token: 'booka_jwt_signup',
+        is_new_account: true,
+        user: { role: 'tenant_admin', tenant_id: 14 },
+        tenant: { id: 14, slug: 'sunrise-clinic', name: 'Sunrise Clinic' },
+      },
+    })
+
+    const [first, second] = await Promise.all([
+      checkAndSyncClerkSession({ clerkPublishableKey: 'pk_test_ZGVkdXAtdGVzdCQ=' }),
+      checkAndSyncClerkSession({ clerkPublishableKey: 'pk_test_ZGVkdXAtdGVzdCQ=' }),
+    ])
+
+    expect(api.post).toHaveBeenCalledTimes(1)
+    expect(first).toEqual(second)
+    expect(getPostAuthRedirectPath(first)).toBe('/t/sunrise-clinic/admin/dashboard')
   })
 
   it('surfaces clear callback error without crashing UI modals when OAuth requires 2FA in headless mode', async () => {

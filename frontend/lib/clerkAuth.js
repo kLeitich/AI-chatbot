@@ -2,6 +2,20 @@ import { Clerk } from '@clerk/clerk-js'
 import api from './api'
 
 const clerkInstances = {}
+let inFlightSyncPromise = null
+
+export function getPostAuthRedirectPath(data, fallbackTenant = 'default') {
+  const role = data?.user?.role
+  if (role === 'platform_admin') {
+    return '/platform/dashboard'
+  }
+  const tenantSlug =
+    data?.tenant?.slug ||
+    (data?.user?.tenant_id ? String(data.user.tenant_id) : '') ||
+    fallbackTenant ||
+    'default'
+  return `/t/${tenantSlug}/admin/dashboard`
+}
 
 function normalizeClerkKey(rawKey) {
   if (!rawKey || typeof rawKey !== 'string') return ''
@@ -170,12 +184,13 @@ async function exchangeClerkSessionWithBooka(
     })
 
     const data = res.data || {}
-    const { token: bookaToken, user } = data
+    const { token: bookaToken, user, tenant: tenantObj } = data
 
     if (bookaToken) {
       localStorage.setItem('token', bookaToken)
       if (user?.role) localStorage.setItem('role', user.role)
       if (user?.tenant_id) localStorage.setItem('tenant_id', String(user.tenant_id))
+      if (tenantObj?.slug) localStorage.setItem('tenant', tenantObj.slug)
     }
 
     try {
@@ -385,132 +400,140 @@ export async function checkAndSyncClerkSession({
   onError = null,
 } = {}) {
   if (typeof window === 'undefined') return null
+  if (inFlightSyncPromise) return inFlightSyncPromise
 
-  const clerkKey = normalizeClerkKey(
-    clerkPublishableKey ||
-      process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||
-      window.CLERK_PUBLISHABLE_KEY
-  )
+  const runSync = async () => {
+    const clerkKey = normalizeClerkKey(
+      clerkPublishableKey ||
+        process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||
+        window.CLERK_PUBLISHABLE_KEY
+    )
 
-  if (!clerkKey) return null
+    if (!clerkKey) return null
 
-  const params = new URLSearchParams(window.location.search)
-  const isSSOCallback =
-    params.has('sso_callback') ||
-    params.has('__clerk_status') ||
-    params.has('__clerk_created_session') ||
-    params.has('__clerk_handshake') ||
-    window.location.hash.includes('sso-callback')
-  const isSSOComplete = params.has('sso_complete')
+    const params = new URLSearchParams(window.location.search)
+    const isSSOCallback =
+      params.has('sso_callback') ||
+      params.has('__clerk_status') ||
+      params.has('__clerk_created_session') ||
+      params.has('__clerk_handshake') ||
+      window.location.hash.includes('sso-callback')
+    const isSSOComplete = params.has('sso_complete')
 
-  let pendingSync = null
-  let loggedOutFlag = false
-  try {
-    const rawPending = sessionStorage.getItem('booka_clerk_pending_sync')
-    if (rawPending) pendingSync = JSON.parse(rawPending)
-    loggedOutFlag = sessionStorage.getItem('booka_clerk_logged_out') === '1'
-  } catch (e) {
-    // ignore
-  }
-
-  const isSessionEndedNotice = params.get('notice') === 'session_ended' || params.get('session_ended')
-
-  // Do not auto-relogin on mount after explicit logout unless returning from an active OAuth redirect
-  if ((isSessionEndedNotice || loggedOutFlag) && !pendingSync && !isSSOCallback && !isSSOComplete) {
-    return null
-  }
-
-  // Only engage SDK on mount if returning from OAuth redirect or active pending flow
-  if (!pendingSync && !isSSOCallback && !isSSOComplete) {
-    return null
-  }
-
-  try {
-    const clerk = await loadClerkSDK(clerkKey, onProgress)
-    if (!clerk) return null
-
-    const baseReturnUrl = `${window.location.origin}${window.location.pathname}`
-    const completeUrl = `${baseReturnUrl}?sso_complete=1`
-    let callbackIssue = ''
-
-    // Handle returning Google OAuth callback to activate session & transfer signIn <-> signUp seamlessly
-    if (isSSOCallback && !clerk.session && typeof clerk.handleRedirectCallback === 'function') {
-      if (onProgress) onProgress('Completing Google sign-in...')
-      await clerk.handleRedirectCallback(
-        {
-          signInForceRedirectUrl: completeUrl,
-          signUpForceRedirectUrl: completeUrl,
-          signInFallbackRedirectUrl: completeUrl,
-          signUpFallbackRedirectUrl: completeUrl,
-          signInUrl: baseReturnUrl,
-          signUpUrl: baseReturnUrl,
-        },
-        async (to) => {
-          if (clerk.session) return
-          const hasUiComponents = Boolean(clerk.uiVersion || clerk.components)
-          if (
-            hasUiComponents &&
-            typeof to === 'string' &&
-            (to.includes('factor') || to.includes('verify') || to.includes('continue'))
-          ) {
-            if (pendingSync?.mode === 'signUp' && typeof clerk.openSignUp === 'function') {
-              clerk.openSignUp({ forceRedirectUrl: completeUrl, fallbackRedirectUrl: completeUrl })
-              return
-            }
-            if (typeof clerk.openSignIn === 'function') {
-              clerk.openSignIn({ forceRedirectUrl: completeUrl, fallbackRedirectUrl: completeUrl })
-              return
-            }
-          }
-          callbackIssue = describeIncompleteCallbackState(clerk) || callbackIssue
-        }
-      )
+    let pendingSync = null
+    let loggedOutFlag = false
+    try {
+      const rawPending = sessionStorage.getItem('booka_clerk_pending_sync')
+      if (rawPending) pendingSync = JSON.parse(rawPending)
+      loggedOutFlag = sessionStorage.getItem('booka_clerk_logged_out') === '1'
+    } catch (e) {
+      // ignore
     }
 
-    if (!clerk.session) {
-      if (isSSOCallback || isSSOComplete) {
-        try {
-          window.history.replaceState({}, '', window.location.pathname)
-          sessionStorage.removeItem('booka_clerk_pending_sync')
-        } catch (e) {
-          // ignore
-        }
-        const issue = callbackIssue || describeIncompleteCallbackState(clerk)
-        if (issue && onError) {
-          onError(issue)
-        }
-      }
+    const isSessionEndedNotice = params.get('notice') === 'session_ended' || params.get('session_ended')
+
+    // Do not auto-relogin on mount after explicit logout unless returning from an active OAuth redirect
+    if ((isSessionEndedNotice || loggedOutFlag) && !pendingSync && !isSSOCallback && !isSSOComplete) {
       return null
     }
 
-    // Clean sso query params from address bar before redirecting into dashboard
+    // Only engage SDK on mount if returning from OAuth redirect or active pending flow
+    if (!pendingSync && !isSSOCallback && !isSSOComplete) {
+      return null
+    }
+
     try {
-      if (isSSOCallback || isSSOComplete) {
-        window.history.replaceState({}, '', window.location.pathname)
+      const clerk = await loadClerkSDK(clerkKey, onProgress)
+      if (!clerk) return null
+
+      const baseReturnUrl = `${window.location.origin}${window.location.pathname}`
+      const completeUrl = `${baseReturnUrl}?sso_complete=1`
+      let callbackIssue = ''
+
+      // Handle returning Google OAuth callback to activate session & transfer signIn <-> signUp seamlessly
+      if (isSSOCallback && !clerk.session && typeof clerk.handleRedirectCallback === 'function') {
+        if (onProgress) onProgress('Completing Google sign-in...')
+        await clerk.handleRedirectCallback(
+          {
+            signInForceRedirectUrl: completeUrl,
+            signUpForceRedirectUrl: completeUrl,
+            signInFallbackRedirectUrl: completeUrl,
+            signUpFallbackRedirectUrl: completeUrl,
+            signInUrl: baseReturnUrl,
+            signUpUrl: baseReturnUrl,
+          },
+          async (to) => {
+            if (clerk.session) return
+            const hasUiComponents = Boolean(clerk.uiVersion || clerk.components)
+            if (
+              hasUiComponents &&
+              typeof to === 'string' &&
+              (to.includes('factor') || to.includes('verify') || to.includes('continue'))
+            ) {
+              if (pendingSync?.mode === 'signUp' && typeof clerk.openSignUp === 'function') {
+                clerk.openSignUp({ forceRedirectUrl: completeUrl, fallbackRedirectUrl: completeUrl })
+                return
+              }
+              if (typeof clerk.openSignIn === 'function') {
+                clerk.openSignIn({ forceRedirectUrl: completeUrl, fallbackRedirectUrl: completeUrl })
+                return
+              }
+            }
+            callbackIssue = describeIncompleteCallbackState(clerk) || callbackIssue
+          }
+        )
       }
-    } catch (e) {
-      // ignore
-    }
 
-    const companyName = pendingSync?.companyName || ''
-    const targetTenant = tenant || pendingSync?.tenant || ''
+      if (!clerk.session) {
+        if (isSSOCallback || isSSOComplete) {
+          try {
+            window.history.replaceState({}, '', window.location.pathname)
+            sessionStorage.removeItem('booka_clerk_pending_sync')
+          } catch (e) {
+            // ignore
+          }
+          const issue = callbackIssue || describeIncompleteCallbackState(clerk)
+          if (issue && onError) {
+            onError(issue)
+          }
+        }
+        return null
+      }
 
-    return await exchangeClerkSessionWithBooka(clerk, {
-      tenant: targetTenant,
-      companyName,
-      onProgress,
-      onSuccess,
-      onError,
-    })
-  } catch (err) {
-    try {
-      sessionStorage.removeItem('booka_clerk_pending_sync')
-    } catch (e) {
-      // ignore
+      // Clean sso query params from address bar before redirecting into dashboard
+      try {
+        if (isSSOCallback || isSSOComplete) {
+          window.history.replaceState({}, '', window.location.pathname)
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      const companyName = pendingSync?.companyName || ''
+      const targetTenant = tenant || pendingSync?.tenant || ''
+
+      return await exchangeClerkSessionWithBooka(clerk, {
+        tenant: targetTenant,
+        companyName,
+        onProgress,
+        onSuccess,
+        onError,
+      })
+    } catch (err) {
+      try {
+        sessionStorage.removeItem('booka_clerk_pending_sync')
+      } catch (e) {
+        // ignore
+      }
+      if (onError) onError(formatClerkError(err, 'Failed to sync Google session'))
+      return null
     }
-    if (onError) onError(formatClerkError(err, 'Failed to sync Google session'))
-    return null
   }
+
+  inFlightSyncPromise = runSync().finally(() => {
+    inFlightSyncPromise = null
+  })
+  return inFlightSyncPromise
 }
 
 /**

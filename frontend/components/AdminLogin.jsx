@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import api from '../lib/api'
-import { initiateClerkGoogleAuth, checkAndSyncClerkSession } from '../lib/clerkAuth'
+import { initiateClerkGoogleAuth, checkAndSyncClerkSession, getPostAuthRedirectPath } from '../lib/clerkAuth'
 
 export default function AdminLogin({ tenant = 'default' }) {
   const [email, setEmail] = useState('')
@@ -23,34 +23,35 @@ export default function AdminLogin({ tenant = 'default' }) {
       }
     }
     if (tenant) {
+      const syncCallbacks = {
+        tenant,
+        onProgress: (status) => {
+          setLoading(true)
+          setSuccess(status)
+        },
+        onSuccess: (data) => {
+          setSuccess('Signed in with Google! Redirecting...')
+          const target = getPostAuthRedirectPath(data, tenant)
+          setTimeout(() => {
+            router.replace(target)
+          }, 700)
+        },
+        onError: (errMsg) => {
+          setSuccess('')
+          setError(errMsg)
+          setLoading(false)
+        },
+      }
       api.get(`/t/${tenant}/public-config`)
         .then((res) => {
           setTenantConfig(res.data)
           checkAndSyncClerkSession({
-            tenant,
+            ...syncCallbacks,
             clerkPublishableKey: res.data?.clerk_publishable_key,
-            onProgress: (status) => setSuccess(status),
-            onSuccess: () => {
-              setSuccess('Signed in via Clerk SSO! Redirecting...')
-              setTimeout(() => {
-                router.replace(`/t/${tenant}/admin/dashboard`)
-              }, 700)
-            },
-            onError: (errMsg) => setError(errMsg),
           })
         })
         .catch(() => {
-          checkAndSyncClerkSession({
-            tenant,
-            onProgress: (status) => setSuccess(status),
-            onSuccess: () => {
-              setSuccess('Signed in via Clerk SSO! Redirecting...')
-              setTimeout(() => {
-                router.replace(`/t/${tenant}/admin/dashboard`)
-              }, 700)
-            },
-            onError: (errMsg) => setError(errMsg),
-          })
+          checkAndSyncClerkSession(syncCallbacks)
         })
     }
   }, [tenant, router])
@@ -84,9 +85,10 @@ export default function AdminLogin({ tenant = 'default' }) {
         clerkPublishableKey: tenantConfig?.clerk_publishable_key,
         onProgress: (status) => setSuccess(status),
         onSuccess: (data) => {
-          setSuccess('Signed in via Clerk SSO! Redirecting...')
+          setSuccess('Signed in with Google! Redirecting...')
+          const target = getPostAuthRedirectPath(data, tenant)
           setTimeout(() => {
-            router.replace(`/t/${tenant}/admin/dashboard`)
+            router.replace(target)
           }, 700)
         },
         onError: (errMsg) => {
@@ -101,7 +103,7 @@ export default function AdminLogin({ tenant = 'default' }) {
       }
     } catch (err) {
       setSuccess('')
-      setError(err?.message || 'Failed to initiate Clerk SSO')
+      setError(err?.message || 'Failed to initiate Google sign-in')
       setLoading(false)
     }
   }
@@ -155,7 +157,7 @@ export default function AdminLogin({ tenant = 'default' }) {
               d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
             />
           </svg>
-          Continue with Google / Clerk SSO
+          Continue with Google
         </button>
       </form>
     </div>

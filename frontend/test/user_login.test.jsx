@@ -30,6 +30,7 @@ describe('UserLogin Component', () => {
     expect(screen.getByPlaceholderText('name@company.com')).toBeDefined()
     expect(screen.getByPlaceholderText('Enter your password')).toBeDefined()
     expect(screen.getByRole('button', { name: /sign in/i })).toBeDefined()
+    expect(screen.getByRole('button', { name: /^continue with google$/i })).toBeDefined()
     expect(screen.getByRole('link', { name: /create an account/i })).toBeDefined()
   })
 

@@ -67,12 +67,20 @@ api.interceptors.response.use(
 
     if (typeof window !== 'undefined') {
       const pathname = nav.getPathname() || ''
-      const isLoginPage = pathname.includes('/login')
-      const isLoginRequest = error.config?.url?.includes('/login')
+      const reqUrl = error.config?.url || ''
+      const isAuthPage =
+        pathname.includes('/login') ||
+        pathname.includes('/signup') ||
+        pathname.includes('/forgot-password') ||
+        pathname.includes('/reset-password')
+      const isAuthRequest =
+        reqUrl.includes('/login') ||
+        reqUrl.includes('/auth/clerk/sync') ||
+        reqUrl.includes('/auth/register')
 
       // On 401 (TOKEN_EXPIRED, TOKEN_REVOKED, ACCOUNT_DISABLED, or unauthorized)
-      // Clear token and redirect to appropriate login page, avoiding redirect loops
-      if (status === 401 && !isLoginPage && !isLoginRequest) {
+      // Clear token and redirect to appropriate login page, avoiding redirect loops or interrupting auth flows
+      if (status === 401 && !isAuthPage && !isAuthRequest) {
         localStorage.removeItem('token')
         localStorage.removeItem('tenant_id')
 

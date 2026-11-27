@@ -88,6 +88,24 @@ describe('Auth Interceptors (401 vs 403)', () => {
     expect(redirectSpy).not.toHaveBeenCalled()
   })
 
+  it('does not redirect away from /signup when /auth/clerk/sync returns 401', async () => {
+    getPathnameSpy.mockReturnValue('/signup')
+
+    const err = {
+      config: { url: '/auth/clerk/sync' },
+      response: {
+        status: 401,
+        data: {
+          code: 'TOKEN_EXPIRED',
+          message: 'clerk token verification failed',
+        },
+      },
+    }
+
+    await expect(responseHandler(err)).rejects.toEqual(err)
+    expect(redirectSpy).not.toHaveBeenCalled()
+  })
+
   it('shows toast and does NOT log out or redirect on 403 PERMISSION_DENIED', async () => {
     localStorage.setItem('token', 'valid-active-token')
 
